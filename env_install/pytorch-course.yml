@@ -1,0 +1,37 @@
+# conda env create -f pytorch-course.yml
+name: pytorch-course
+channels:
+  - nvidia
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  # Core Python
+  - python=3.9
+
+  # Numerical + signal processing
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn
+
+  # Deep learning frameworks
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1   # GPU-enabled build
+  - fastai
+
+  # Plotting/visuals
+  - matplotlib
+  - tqdm
+
+  # IDE
+  - spyder
+  
+  # support extras
+  - directory-tree
+
+  - pip
+  # Extra packages via pip
+  - pip:
