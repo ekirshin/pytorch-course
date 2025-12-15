@@ -14,6 +14,7 @@ dependencies:
   - scipy
   - pandas
   - scikit-learn
+  - torchmetrics
 
   # Deep learning frameworks
   - pytorch
