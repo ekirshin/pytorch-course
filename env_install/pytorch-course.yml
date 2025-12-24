@@ -16,12 +16,13 @@ dependencies:
   - scikit-learn
   - torchmetrics
 
-  # Deep learning frameworks
+  # Deep learning packages
   - pytorch
   - torchvision
   - torchaudio
   - pytorch-cuda=12.1   # GPU-enabled build
   - fastai
+  - optuna
 
   # Plotting/visuals
   - matplotlib
