@@ -1,39 +1,34 @@
 # conda env create -f pytorch-course.yml
 name: pytorch-course
 channels:
-  - nvidia
   - pytorch
+  - nvidia
   - conda-forge
   - defaults
-dependencies:
-  # Core Python
-  - python=3.9
 
-  # Numerical + signal processing
+dependencies:
+  - python=3.10
+
+  # GPU-enabled PyTorch stack
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1
+
+  # Scientific stack
   - numpy
   - scipy
   - pandas
   - scikit-learn
   - torchmetrics
 
-  # Deep learning packages
-  - pytorch
-  - torchvision
-  - torchaudio
-  - pytorch-cuda=12.1   # GPU-enabled build
+  # Extras
   - fastai
   - optuna
-
-  # Plotting/visuals
   - matplotlib
   - tqdm
-
-  # IDE
   - spyder
-  
-  # support extras
   - directory-tree
+  - ipywidgets
 
   - pip
-  # Extra packages via pip
-  - pip:
