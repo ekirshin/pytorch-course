@@ -21,6 +21,7 @@ dependencies:
   - pandas
   - scikit-learn
   - torchmetrics
+  - transformers
 
   # Extras
   - fastai
@@ -30,5 +31,6 @@ dependencies:
   - spyder
   - directory-tree
   - ipywidgets
+  - seaborn
 
   - pip
