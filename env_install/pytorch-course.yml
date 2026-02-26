@@ -32,5 +32,6 @@ dependencies:
   - directory-tree
   - ipywidgets
   - seaborn
+  - lightning
 
   - pip
