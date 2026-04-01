@@ -238,7 +238,7 @@ def show_sample_images(dataset, class_names):
     
     
     
-def display_torch_summary(summary_object, attr_names, display_names, depth):
+def display_torch_summary(summary_object, attr_names, display_names, depth, save_path=None):
     """
     Displays a torchinfo summary object as a styled HTML table.
 
@@ -347,6 +347,12 @@ def display_torch_summary(summary_object, attr_names, display_names, depth):
     # Combine all HTML parts and display.
     final_html = table_html + params_html + size_html
     display(HTML(final_html))
+    
+    # NEW: Save HTML to file if requested
+    if save_path is not None:
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write(final_html)
+        print(f"Model summary saved to: {save_path}")
 
 
 def training_loop_16_mixed(
