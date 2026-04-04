@@ -546,3 +546,71 @@ loss_function = nn.CrossEntropyLoss()
 # Use Adam with lr=0.001
 optimizer = optim.Adam(densenet_model.parameters(), lr=0.001)
 
+# %%
+# Define the total number of full training cycles (epochs) to run.
+num_epochs = 20
+
+# %%
+# Launch the training process for the custom-built DenseNet model.
+trained_densenet, history, confusion_matrix = helper_utils.training_loop_16_mixed(
+    model=densenet_model,
+    train_loader=train_loader,
+    val_loader=val_loader,
+    loss_function=loss_function,
+    optimizer=optimizer,
+    num_epochs=num_epochs,
+    device=device,
+    save_path='./saved_models/best_trained_densenet.pth',
+)
+
+# %% The Architect's Success: Analyzing the Performance
+# Plot the learning curves to visualize the model's performance and highlight the best epoch.
+helper_utils.plot_training_history(history)
+
+# %% Visualizing Predictions and Confusion Matrix
+# Visualize the performance of the trained DenseNet by plotting its predictions on a sample of images from the validation set.
+helper_utils.visualize_predictions(trained_densenet, val_loader, class_names, device)
+# %%
+# Plot the confusion matrix to visualize the model's class-by-class performance.
+helper_utils.plot_confusion_matrix(confusion_matrix, class_names)
+
+# %% The Professional's Shortcut: Feature Extraction
+# Instead of starting from zero, you can benefit from feature extraction by using the densenet121 model directly from Torchvision models library, which has been trained on a massive dataset (like ImageNet). Since this model is already an expert at recognizing a vast library of visual features, you can freeze its pre-trained layers and simply replace the final classifier head with a new one suited for your 21 classes. By training only this small, new layer, you can achieve excellent results in just a few epochs.
+# Load the pre-trained DenseNet-121 model and configure it for feature extraction.
+pretrained_densenet = helper_utils.load_pretrained_densenet(
+    num_classes=num_classes,
+    weights_path="./pretrained_densenet_weights/densenet121-a639ec97.pth",
+    train_classifier_only=True,
+    seed=SEED                  
+)
+ 
+# %%
+# Pass only the parameters of the new, trainable classifier head to the optimizer.
+optimizer_pretrained = optim.Adam(
+    (p for p in pretrained_densenet.parameters() if p.requires_grad), 
+    lr=0.001
+)
+
+# %% Feel free to set a different value for num_epochs. Since you are only training a small classifier head on top of a powerful pre-trained base, the model learns extremely quickly. You will find that 5 epochs are more than enough to achieve a very high validation accuracy.
+# Set the number of training epochs. A small number is sufficient for feature extraction.
+num_epochs = 5
+
+# %%
+# Launch the feature extraction process for the pre-trained DenseNet.
+feature_extracted_densenet, history, cm_feature_densenet = helper_utils.training_loop_16_mixed(
+    model=pretrained_densenet,
+    train_loader=train_loader,
+    val_loader=val_loader,
+    loss_function=loss_function,
+    optimizer=optimizer_pretrained,
+    num_epochs=num_epochs,
+    device=device,
+    save_path='./saved_models/best_pretrained_densenet.pth',
+)
+# %% Visualizing Predictions and Confusion Matrix
+# Visualize predictions from the feature-extracted model on a sample of validation images.
+helper_utils.visualize_predictions(feature_extracted_densenet, val_loader, class_names, device)
+
+# %%
+# Plot the confusion matrix to visualize the model's class-by-class performance.
+helper_utils.plot_confusion_matrix(cm_feature_densenet, class_names)
