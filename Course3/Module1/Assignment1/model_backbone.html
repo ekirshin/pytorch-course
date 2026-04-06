@@ -1,0 +1,173 @@
+<style type="text/css">
+#T_cdea6 table {
+  width: 100%;
+  border-collapse: collapse;
+}
+#T_cdea6 th {
+  text-align: left;
+  padding: 8px;
+  background-color: #4f4f4f;
+  color: white;
+  border-bottom: 1px solid #ddd;
+}
+#T_cdea6 td {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid #ddd;
+}
+#T_cdea6_row0_col0, #T_cdea6_row0_col1, #T_cdea6_row0_col2, #T_cdea6_row0_col3, #T_cdea6_row1_col0, #T_cdea6_row1_col1, #T_cdea6_row1_col2, #T_cdea6_row1_col3, #T_cdea6_row2_col0, #T_cdea6_row2_col1, #T_cdea6_row2_col2, #T_cdea6_row2_col3, #T_cdea6_row3_col0, #T_cdea6_row3_col1, #T_cdea6_row3_col2, #T_cdea6_row3_col3, #T_cdea6_row4_col0, #T_cdea6_row4_col1, #T_cdea6_row4_col2, #T_cdea6_row4_col3, #T_cdea6_row5_col0, #T_cdea6_row5_col1, #T_cdea6_row5_col2, #T_cdea6_row5_col3, #T_cdea6_row6_col0, #T_cdea6_row6_col1, #T_cdea6_row6_col2, #T_cdea6_row6_col3, #T_cdea6_row7_col0, #T_cdea6_row7_col1, #T_cdea6_row7_col2, #T_cdea6_row7_col3, #T_cdea6_row8_col0, #T_cdea6_row8_col1, #T_cdea6_row8_col2, #T_cdea6_row8_col3, #T_cdea6_row9_col0, #T_cdea6_row9_col1, #T_cdea6_row9_col2, #T_cdea6_row9_col3, #T_cdea6_row10_col0, #T_cdea6_row10_col1, #T_cdea6_row10_col2, #T_cdea6_row10_col3, #T_cdea6_row11_col0, #T_cdea6_row11_col1, #T_cdea6_row11_col2, #T_cdea6_row11_col3, #T_cdea6_row12_col0, #T_cdea6_row12_col1, #T_cdea6_row12_col2, #T_cdea6_row12_col3, #T_cdea6_row13_col0, #T_cdea6_row13_col1, #T_cdea6_row13_col2, #T_cdea6_row13_col3, #T_cdea6_row14_col0, #T_cdea6_row14_col1, #T_cdea6_row14_col2, #T_cdea6_row14_col3, #T_cdea6_row15_col0, #T_cdea6_row15_col1, #T_cdea6_row15_col2, #T_cdea6_row15_col3, #T_cdea6_row16_col0, #T_cdea6_row16_col1, #T_cdea6_row16_col2, #T_cdea6_row16_col3, #T_cdea6_row17_col0, #T_cdea6_row17_col1, #T_cdea6_row17_col2, #T_cdea6_row17_col3, #T_cdea6_row18_col0, #T_cdea6_row18_col1, #T_cdea6_row18_col2, #T_cdea6_row18_col3, #T_cdea6_row19_col0, #T_cdea6_row19_col1, #T_cdea6_row19_col2, #T_cdea6_row19_col3, #T_cdea6_row20_col0, #T_cdea6_row20_col1, #T_cdea6_row20_col2, #T_cdea6_row20_col3 {
+  white-space: pre;
+  vertical-align: top;
+}
+</style>
+<table id="T_cdea6">
+  <thead>
+    <tr>
+      <th id="T_cdea6_level0_col0" class="col_heading level0 col0" >Layer (type (var_name):depth-idx)</th>
+      <th id="T_cdea6_level0_col1" class="col_heading level0 col1" >Input Shape </th>
+      <th id="T_cdea6_level0_col2" class="col_heading level0 col2" >Output Shape</th>
+      <th id="T_cdea6_level0_col3" class="col_heading level0 col3" >Param #</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td id="T_cdea6_row0_col0" class="data row0 col0" >MobileNetBackbone (MobileNetBackbone)</td>
+      <td id="T_cdea6_row0_col1" class="data row0 col1" >[32, 3, 64, 64]</td>
+      <td id="T_cdea6_row0_col2" class="data row0 col2" >[32, 64, 4, 4]</td>
+      <td id="T_cdea6_row0_col3" class="data row0 col3" >--</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row1_col0" class="data row1 col0" >&nbsp;&nbsp;&nbsp;&nbsp;Sequential (stem): 1-1</td>
+      <td id="T_cdea6_row1_col1" class="data row1 col1" >[32, 3, 64, 64]</td>
+      <td id="T_cdea6_row1_col2" class="data row1 col2" >[32, 16, 32, 32]</td>
+      <td id="T_cdea6_row1_col3" class="data row1 col3" >--</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row2_col0" class="data row2 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Conv2d (0): 2-1</td>
+      <td id="T_cdea6_row2_col1" class="data row2 col1" >[32, 3, 64, 64]</td>
+      <td id="T_cdea6_row2_col2" class="data row2 col2" >[32, 16, 32, 32]</td>
+      <td id="T_cdea6_row2_col3" class="data row2 col3" >432</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row3_col0" class="data row3 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;BatchNorm2d (1): 2-2</td>
+      <td id="T_cdea6_row3_col1" class="data row3 col1" >[32, 16, 32, 32]</td>
+      <td id="T_cdea6_row3_col2" class="data row3 col2" >[32, 16, 32, 32]</td>
+      <td id="T_cdea6_row3_col3" class="data row3 col3" >32</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row4_col0" class="data row4 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ReLU (2): 2-3</td>
+      <td id="T_cdea6_row4_col1" class="data row4 col1" >[32, 16, 32, 32]</td>
+      <td id="T_cdea6_row4_col2" class="data row4 col2" >[32, 16, 32, 32]</td>
+      <td id="T_cdea6_row4_col3" class="data row4 col3" >--</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row5_col0" class="data row5 col0" >&nbsp;&nbsp;&nbsp;&nbsp;Sequential (blocks): 1-2</td>
+      <td id="T_cdea6_row5_col1" class="data row5 col1" >[32, 16, 32, 32]</td>
+      <td id="T_cdea6_row5_col2" class="data row5 col2" >[32, 64, 4, 4]</td>
+      <td id="T_cdea6_row5_col3" class="data row5 col3" >--</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row6_col0" class="data row6 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;InvertedResidualBlock (0): 2-4</td>
+      <td id="T_cdea6_row6_col1" class="data row6 col1" >[32, 16, 32, 32]</td>
+      <td id="T_cdea6_row6_col2" class="data row6 col2" >[32, 24, 16, 16]</td>
+      <td id="T_cdea6_row6_col3" class="data row6 col3" >--</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row7_col0" class="data row7 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (expand): 3-1</td>
+      <td id="T_cdea6_row7_col1" class="data row7 col1" >[32, 16, 32, 32]</td>
+      <td id="T_cdea6_row7_col2" class="data row7 col2" >[32, 48, 32, 32]</td>
+      <td id="T_cdea6_row7_col3" class="data row7 col3" >864</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row8_col0" class="data row8 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (depthwise): 3-2</td>
+      <td id="T_cdea6_row8_col1" class="data row8 col1" >[32, 48, 32, 32]</td>
+      <td id="T_cdea6_row8_col2" class="data row8 col2" >[32, 48, 16, 16]</td>
+      <td id="T_cdea6_row8_col3" class="data row8 col3" >20,832</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row9_col0" class="data row9 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (project): 3-3</td>
+      <td id="T_cdea6_row9_col1" class="data row9 col1" >[32, 48, 16, 16]</td>
+      <td id="T_cdea6_row9_col2" class="data row9 col2" >[32, 24, 16, 16]</td>
+      <td id="T_cdea6_row9_col3" class="data row9 col3" >1,200</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row10_col0" class="data row10 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (shortcut): 3-4</td>
+      <td id="T_cdea6_row10_col1" class="data row10 col1" >[32, 16, 32, 32]</td>
+      <td id="T_cdea6_row10_col2" class="data row10 col2" >[32, 24, 16, 16]</td>
+      <td id="T_cdea6_row10_col3" class="data row10 col3" >432</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row11_col0" class="data row11 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;InvertedResidualBlock (1): 2-5</td>
+      <td id="T_cdea6_row11_col1" class="data row11 col1" >[32, 24, 16, 16]</td>
+      <td id="T_cdea6_row11_col2" class="data row11 col2" >[32, 32, 8, 8]</td>
+      <td id="T_cdea6_row11_col3" class="data row11 col3" >--</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row12_col0" class="data row12 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (expand): 3-5</td>
+      <td id="T_cdea6_row12_col1" class="data row12 col1" >[32, 24, 16, 16]</td>
+      <td id="T_cdea6_row12_col2" class="data row12 col2" >[32, 72, 16, 16]</td>
+      <td id="T_cdea6_row12_col3" class="data row12 col3" >1,872</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row13_col0" class="data row13 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (depthwise): 3-6</td>
+      <td id="T_cdea6_row13_col1" class="data row13 col1" >[32, 72, 16, 16]</td>
+      <td id="T_cdea6_row13_col2" class="data row13 col2" >[32, 72, 8, 8]</td>
+      <td id="T_cdea6_row13_col3" class="data row13 col3" >46,800</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row14_col0" class="data row14 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (project): 3-7</td>
+      <td id="T_cdea6_row14_col1" class="data row14 col1" >[32, 72, 8, 8]</td>
+      <td id="T_cdea6_row14_col2" class="data row14 col2" >[32, 32, 8, 8]</td>
+      <td id="T_cdea6_row14_col3" class="data row14 col3" >2,368</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row15_col0" class="data row15 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (shortcut): 3-8</td>
+      <td id="T_cdea6_row15_col1" class="data row15 col1" >[32, 24, 16, 16]</td>
+      <td id="T_cdea6_row15_col2" class="data row15 col2" >[32, 32, 8, 8]</td>
+      <td id="T_cdea6_row15_col3" class="data row15 col3" >832</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row16_col0" class="data row16 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;InvertedResidualBlock (2): 2-6</td>
+      <td id="T_cdea6_row16_col1" class="data row16 col1" >[32, 32, 8, 8]</td>
+      <td id="T_cdea6_row16_col2" class="data row16 col2" >[32, 64, 4, 4]</td>
+      <td id="T_cdea6_row16_col3" class="data row16 col3" >--</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row17_col0" class="data row17 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (expand): 3-9</td>
+      <td id="T_cdea6_row17_col1" class="data row17 col1" >[32, 32, 8, 8]</td>
+      <td id="T_cdea6_row17_col2" class="data row17 col2" >[32, 192, 8, 8]</td>
+      <td id="T_cdea6_row17_col3" class="data row17 col3" >6,528</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row18_col0" class="data row18 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (depthwise): 3-10</td>
+      <td id="T_cdea6_row18_col1" class="data row18 col1" >[32, 192, 8, 8]</td>
+      <td id="T_cdea6_row18_col2" class="data row18 col2" >[32, 192, 4, 4]</td>
+      <td id="T_cdea6_row18_col3" class="data row18 col3" >332,160</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row19_col0" class="data row19 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (project): 3-11</td>
+      <td id="T_cdea6_row19_col1" class="data row19 col1" >[32, 192, 4, 4]</td>
+      <td id="T_cdea6_row19_col2" class="data row19 col2" >[32, 64, 4, 4]</td>
+      <td id="T_cdea6_row19_col3" class="data row19 col3" >12,416</td>
+    </tr>
+    <tr>
+      <td id="T_cdea6_row20_col0" class="data row20 col0" >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Sequential (shortcut): 3-12</td>
+      <td id="T_cdea6_row20_col1" class="data row20 col1" >[32, 32, 8, 8]</td>
+      <td id="T_cdea6_row20_col2" class="data row20 col2" >[32, 64, 4, 4]</td>
+      <td id="T_cdea6_row20_col3" class="data row20 col3" >2,176</td>
+    </tr>
+  </tbody>
+</table>
+
+    <div style="margin-top: 20px; font-family: monospace; line-height: 1.6;">
+        <hr><p><b>Total params:</b> 428,944</p>
+        <p><b>Trainable params:</b> 428,944</p>
+        <p><b>Non-trainable params:</b> 0</p>
+        <p><b>Total mult-adds:</b> 0.53 GB</p><hr>
+    </div>
+    <div style="font-family: monospace; line-height: 1.6;">
+        <p><b>Input size (MB):</b> 1.50</p>
+        <p><b>Forward/backward pass size (MB):</b> 65.75</p>
+        <p><b>Params size (MB):</b> 1.64</p>
+        <p><b>Estimated Total Size (MB):</b> 68.89</p><hr>
+    </div>
