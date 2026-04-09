@@ -544,3 +544,123 @@ trained_classifier =  helper_utils.training_loop(
 # %% Evaluating the Classifier
 # Display predictions
 helper_utils.display_random_predictions_per_class(trained_classifier, val_loader, classes, device)
+
+# %% Building a Visual Search Engine
+# Teaching Similarity: The Triplet Dataset
+
+class TripleDataset(Dataset):
+    """
+    A custom Dataset class that returns triplets of images (anchor, positive, negative).
+
+    This class wraps a standard dataset and, for a given index, returns the 
+    item at that index (anchor), a random item with the same label (positive),
+    and a random item with a different label (negative).
+    """
+    
+    def __init__(self, dataset):
+        """
+        Initializes the TripleDataset.
+
+        Args:
+            dataset: The base dataset (e.g., torchvision.datasets) 
+                     which contains (data, label) pairs.
+        """
+
+        # Store the original dataset
+        self.dataset = dataset
+
+        # Get a list of all available labels
+        self.labels = range(len(dataset.classes))
+
+        # Create a mapping from labels to their corresponding indices in the dataset
+        self.labels_to_indices = self._get_labels_to_indices()
+
+    def __len__(self):
+        """
+        Returns the total number of items in the dataset.
+        """
+        # The length is the same as the original wrapped dataset
+        return len(self.dataset)
+
+    def _get_labels_to_indices(self):
+        """
+        Creates a dictionary mapping each label to a list of indices.
+        
+        Returns:
+            A dictionary where keys are labels and values are lists of 
+            indices in the dataset that have that label.
+        """
+        # Initialize an empty dictionary
+        labels_to_indices = {}
+        # Iterate over the entire dataset
+        for idx, (_, label) in enumerate(self.dataset):
+            # If the label is not yet in the dictionary, add it with an empty list
+            if label not in labels_to_indices:
+                labels_to_indices[label] = []
+            # Append the current index to the list for its label
+            labels_to_indices[label].append(idx)
+        # Return the completed map
+        return labels_to_indices
+    
+
+    def _get_positive_negative_indices(self, anchor_label):
+        """
+        Finds random indices for a positive and a negative sample.
+
+        Args:
+            anchor_label: The label of the anchor sample.
+
+        Returns:
+            A tuple (positive_index, negative_index).
+        """
+
+        ### START CODE HERE ###
+
+        # Get all indices for the anchor label
+        positive_indices = self.labels_to_indices[anchor_label]
+        # Randomly select one index from the list of positive indices
+        positive_index = random.choice(positive_indices)
+
+        # Get all indices for a negative label
+        # Randomly choose a label that is different from the anchor label
+        negative_label = random.choice([label for label in self.labels if label != anchor_label]) 
+        
+        # Get all indices for the chosen negative label
+        negative_indices = self.labels_to_indices[negative_label]
+        # Randomly select one index from the list of negative indices
+        negative_index = random.choice(negative_indices)
+
+        ### END CODE HERE ###
+
+        return positive_index, negative_index
+
+    def __getitem__(self, idx):
+        """
+        Retrieves a triplet (anchor, positive, negative) for a given index.
+
+        Args:
+            idx: The index of the anchor item.
+
+        Returns:
+            A tuple containing the anchor image, positive image, and negative image.
+        """
+
+        ### START CODE HERE ###
+
+        # Get the anchor image and label
+        anchor_image, anchor_label = self.dataset[idx]
+
+        # Get positive and negative indices based on the anchor label
+        positive_index, negative_index = self._get_positive_negative_indices(anchor_label)
+
+        # Get a positive image (same label)
+        positive_image, _ = self.dataset[positive_index]
+
+        # Get a negative image (different label)
+        negative_image, _ = self.dataset[negative_index]
+
+        ### END CODE HERE ###
+
+        return (anchor_image, positive_image, negative_image)
+    
+    
