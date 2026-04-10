@@ -1,0 +1,29 @@
+# conda env create -f pytorch-course_cuda13.yml
+name: pytorch-course
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn
+  - torchmetrics
+  - transformers
+  - opencv
+  - fastai
+  - optuna
+  - matplotlib
+  - tqdm
+  - spyder
+  - directory-tree
+  - ipywidgets
+  - seaborn
+  - lightning
+  - torchinfo
+
+  - pip:
+      - --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu131

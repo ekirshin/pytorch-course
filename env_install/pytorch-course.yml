@@ -22,6 +22,7 @@ dependencies:
   - scikit-learn
   - torchmetrics
   - transformers
+  - opencv
 
   # Extras
   - fastai
