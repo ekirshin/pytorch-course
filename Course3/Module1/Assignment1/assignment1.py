@@ -527,7 +527,7 @@ optimizer = torch.optim.Adam(mobilenet_classifier.parameters(), lr=0.01)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
 # %% # Set the number of epochs for training
-n_epochs = 20
+n_epochs = 10
 
 # %% # Start the training loop
 trained_classifier =  helper_utils.training_loop(
@@ -663,4 +663,324 @@ class TripleDataset(Dataset):
 
         return (anchor_image, positive_image, negative_image)
     
+# %% # --- Verification Cell ---
+# Set seed for reproducibility of random sampling within the dataset
+random.seed(42)
+
+# Create a copy of the validation dataset to use as a base for the toy triplet dataset
+toy_dataset_base = copy.deepcopy(validation_dataset)
+
+# Apply a simple transformation
+toy_dataset_base.transform = transforms.Compose([
+    transforms.Resize((150, 150)),
+    transforms.ToTensor()
+])
+
+# Instantiate the TripleDataset using the prepared base dataset
+triple_dataset_toy = TripleDataset(dataset=toy_dataset_base)
+
+# Retrieve the first triplet (index 0) from the dataset
+anchor_img, positive_image, negative_image = triple_dataset_toy[0]
+
+# Display the triplet
+images_list = [anchor_img, positive_image, negative_image]
+grid = vutils.make_grid(images_list, nrow=3, padding=2) # nrow=3 ensures side-by-side display
+grid_pil = transforms.ToPILImage()(grid)
+print("Sample Triplet (Anchor, Positive, Negative):")
+display(grid_pil)
     
+# %% # Instantiate the TripleDataset using the main training dataset
+triple_dataset = TripleDataset(train_dataset)
+
+# Create a DataLoader for the TripleDataset
+siamese_dataloader = torch.utils.data.DataLoader(
+    triple_dataset,
+    batch_size=32,  # Define the number of triplets per batch
+    shuffle=True,
+)
+
+# %% Architecting the Visual Search Model
+# With your TripleDataset ready to feed comparison examples, you can now build the Siamese Network itself. This architecture cleverly reuses the feature extraction capabilities you already built for the classifier, demonstrating the power of modular design.
+# 2.3.1 - The Siamese Encoder: Reusing the Backbone
+# The core of the Siamese Network is the encoder. This is the part that takes an image and converts it into a meaningful numerical representation (an embedding). Instead of building a new encoder from scratch, you'll leverage the MobileNetBackbone you created earlier. This is a prime example of parameter sharing and modularity in action – the backbone learns general visual features, which are useful for both classification and similarity tasks.
+# You'll wrap this backbone in a SiameseEncoder class. This wrapper adds a simple "representation head" consisting of an AdaptiveAvgPool2d layer followed by a Flatten layer. This head takes the 2D feature map produced by the backbone and converts it into a fixed size 1D vector – the final embedding.
+# The SiameseEncoder class is defined below. Notice how it takes a backbone as input during initialization.
+class SiameseEncoder(nn.Module):
+    """
+    Implements an encoder module suitable for Siamese networks.
+
+    This class takes a pre-defined backbone (feature extractor) and adds a
+    representation head (pooling + flatten) to produce a fixed-size vector
+    embedding for an input image.
+    """
+
+    def __init__(self, backbone):
+        """
+        Initializes the SiameseEncoder.
+
+        Args:
+            backbone (nn.Module): The convolutional neural network to use
+                                  as the feature extractor.
+        """
+        # Initialize the parent nn.Module
+        super(SiameseEncoder, self).__init__()
+
+        # Store the provided backbone model
+        self.backbone = backbone
+
+        # Define the representation head
+        self.representation = nn.Sequential(
+            # Apply adaptive average pooling to reduce spatial dimensions to 1x1
+            # This makes the output size independent of the input image size (after backbone)
+            nn.AdaptiveAvgPool2d(1),
+            # Flatten the 1x1 feature map into a 1D vector
+            nn.Flatten(),
+        )
+
+    def forward(self, x):
+        """
+        Defines the forward pass through the encoder.
+
+        Args:
+            x (torch.Tensor): The input tensor (e.g., a batch of images).
+
+        Returns:
+            torch.Tensor: The final 1D embedding vector for the input.
+        """
+        # 1. Extract features using the backbone
+        features = self.backbone(x)
+        # 2. Convert feature map to a fixed-size vector using the representation head
+        representation = self.representation(features)
+        # Return the resulting embedding vector
+        return representation
+
+# %% Instantiate the SiameseEncoder. You'll pass the backbone, trained_classifier.backbone from your previously created mobilenet_classifier to demonstrate reuse. This is efficient – the backbone's learned features are directly transferred.
+# Create the Siamese Encoder instance
+# Reuse the backbone from the classifier model you built earlier!
+siamese_encoder = SiameseEncoder(
+    backbone=trained_classifier.backbone # Pass the existing backbone
+)
+
+# %% The Siamese Network Wrapper
+# Now you create the main SiameseNetwork class. This acts as a wrapper around your siamese_encoder. Its primary role during training is to take the three images of a triplet (anchor, positive, negative), pass each of them through the same siamese_encoder instance (ensuring shared weights), and return the three resulting embeddings. It also includes a get_embedding method, which is useful for processing single images during inference (when you want to find similar items).
+class SiameseNetwork(nn.Module):
+    """
+    Implements the main Siamese Network structure.
+
+    This network takes multiple inputs (anchor, positive, negative during training)
+    and processes each through a shared `embedding_network` (the SiameseEncoder)
+    to produce corresponding embeddings.
+    """
+
+    def __init__(self, embedding_network):
+        """
+        Initializes the SiameseNetwork.
+
+        Args:
+            embedding_network (nn.Module): The shared encoder network (e.g., SiameseEncoder)
+                                           that generates embeddings from images.
+        """
+        # Initialize the parent nn.Module
+        super(SiameseNetwork, self).__init__()
+        # Store the shared embedding network
+        self.embedding_network = embedding_network
+
+    def forward(self, anchor, positive, negative):
+        """
+        Defines the forward pass for training with image triplets.
+
+        Args:
+            anchor (torch.Tensor): The batch of anchor images.
+            positive (torch.Tensor): The batch of positive images (same class as anchor).
+            negative (torch.Tensor): The batch of negative images (different class from anchor).
+
+        Returns:
+            tuple: A tuple containing the embeddings for anchor, positive, and negative images.
+                   (anchor_output, positive_output, negative_output)
+        """
+        # Process the anchor image through the embedding network
+        anchor_output = self.embedding_network(anchor)
+        # Process the positive image through the *same* embedding network (shared weights)
+        positive_output = self.embedding_network(positive)
+        # Process the negative image through the *same* embedding network (shared weights)
+        negative_output = self.embedding_network(negative)
+
+        # Return the generated embeddings
+        return anchor_output, positive_output, negative_output
+
+    def get_embedding(self, image):
+        """
+        Generates an embedding for a single input image. Used for inference/retrieval.
+
+        Args:
+            image (torch.Tensor): The input image tensor (should include batch dimension).
+
+        Returns:
+            torch.Tensor: The embedding vector for the image.
+        """
+        # Pass the single image through the embedding network
+        return self.embedding_network(image)
+# %% # Instantiate the Siamese Network
+siamese_network = SiameseNetwork(embedding_network=siamese_encoder)
+    
+# %% Training the Siamese Network
+# You have the data generator (TripleDataset) and the model architecture (SiameseNetwork wrapping the SiameseEncoder). Now, set up the final pieces needed for training:
+
+# Loss Function: You'll use nn.TripletMarginLoss. This loss function directly implements the core idea of Siamese training: it calculates the distances between the anchor positive pair (
+# ) and the anchor negative pair (
+# ) and penalizes the model if 
+#  is not smaller than 
+#  by at least a specified margin. The goal is 
+# .
+
+# Optimizer: torch.optim.AdamW is a good choice for optimizing the network's weights.
+# EDITABLE CELL: Feel free to play around with different "margin" and "lr" values
+
+# Define the Triplet Margin Loss function
+# margin=1.0: Enforces that the negative sample should be at least 1.0 distance unit farther than the positive sample
+# p=2.0: Use Euclidean distance (L2 norm)
+loss_fcn = nn.TripletMarginLoss(margin=1.0, p=2.0)
+
+# Define the AdamW optimizer, passing the Siamese network's parameters and a learning rate
+optimizer = torch.optim.AdamW(siamese_network.parameters(), lr=0.001)
+
+# %%
+# Now, train the Siamese network using the siamese_training_loop helper function. This loop focuses solely on minimizing the TripletMarginLoss. Unlike classification, the goal here isn't to achieve a specific accuracy during training, but rather to organize the embedding space effectively by pulling similar items (anchor, positive) closer and pushing dissimilar items (anchor, negative) apart. The decreasing loss value is your main indicator of progress. The true test of the model's success will be its performance in the visual search task later. Train for a small number of epochs initially to verify the setup.
+# Define the number of training epochs
+num_epochs = 15
+
+# %%
+# Run the training loop for the Siamese network
+helper_utils.siamese_training_loop(
+    # The Siamese model instance
+    model=siamese_network,
+    # The DataLoader providing triplets
+    dataloader=siamese_dataloader,
+    # The TripletMarginLoss function
+    loss_fcn=loss_fcn,
+    # The AdamW optimizer
+    optimizer=optimizer,
+    # The compute device
+    device=device,
+    # The number of epochs to train
+    n_epochs=num_epochs,
+)
+
+# %% Performing Visual Search (Retrieval)
+# With a trained Siamese network, you now have an encoder (siamese_encoder) capable of turning fashion images into meaningful embedding vectors. The final step is to use these embeddings to find similar items. This process typically involves:
+
+# Selecting a Query Image: Choose an image for which you want to find similar items.
+# Generating Query Embedding: Pass the query image through the trained siamese_encoder to get its embedding vector.
+# Generating Catalog Embeddings: Process all images in your product catalog (represented here by the validation_dataset) through the siamese_encoder to create an embedding for each item. In a real system, these would be pre calculated and stored in a database for fast lookup.
+# Calculating Distances: Compute the distance (e.g., Euclidean distance) between the query embedding and all catalog embeddings.
+# Ranking: Sort the catalog items based on their distance to the query, from smallest (most similar) to largest (least similar).
+# Retrieving Top Results: Select the top N items with the smallest distances.
+# Selecting the Query Image
+# You have two options for selecting the image you want to search for:
+
+# Use a Provided Sample Image: You can use one of the sample images available in the ./images/ directory. Here are the paths:
+# ./images/dress.jpg
+# ./images/hat.jpg
+# ./images/longsleeve.jpg
+# ./images/pant.jpg
+# ./images/shoes.jpg
+# ./images/shorts.jpg
+# ./images/t_shirt.jpg
+# Upload Your Own Image: Use the widget below to upload a custom JPG image.
+# Running helper_utils.upload_jpg_widget() displays an upload widget.
+# You can only upload images with a .jpg extension.
+# Each image file size must not exceed 5 MB.
+# After successful upload, the widget will display the file path (e.g., ./uploads/your_image.jpg). Copy this path.
+# You can reuse the widget multiple times without rerunning the cell.
+# Run the cell below to display the image upload widget.
+# Display the widget for uploading JPG images
+
+#helper_utils.upload_jpg_widget()
+
+# %%
+# Replace the example path below with the path to your desired query image
+# Example using a provided image: image_path = './images/hat.jpg'
+# Example using an uploaded image: image_path = './uploads/your_uploaded_image.jpg'
+
+image_path = './images/t_shirt.jpg' ### Add your image path here
+
+# %% # Load the selected image using the helper function
+query_img = helper_utils.get_query_img(image_path)
+# Display the query image
+print("Query Image:")
+display(query_img)
+
+# %%  Define a function get_query_img_embedding to process a single PIL image: apply the necessary transformations, pass it through the trained encoder, and return its embedding as a NumPy array.
+def get_query_img_embedding(encoder, transform, img, device):
+    """
+    Generates an embedding vector for a single query PIL image.
+
+    Args:
+        encoder (nn.Module): The trained embedding model (e.g., SiameseEncoder).
+        transform (callable): The torchvision transforms to apply (e.g., resize, normalize).
+        img (PIL.Image): The input query image.
+        device (torch.device): The device ('cuda' or 'cpu') to perform inference on.
+
+    Returns:
+        np.ndarray: The embedding vector as a NumPy array.
+    """
+    # Apply the transformations (resize, ToTensor, normalize)
+    tensor_img = transform(img)
+
+    # Add a batch dimension (B, C, H, W) as the model expects batches
+    # and move the tensor to the specified device
+    query_img_tensor = tensor_img.unsqueeze(0).to(device)
+
+    # Set the encoder to evaluation mode (important for layers like BatchNorm, Dropout)
+    encoder.eval()
+    # Perform inference without calculating gradients to save memory and computation
+    with torch.no_grad():
+        # Pass the image tensor through the encoder model
+        query_img_embedding = encoder(query_img_tensor)
+
+    # Move the resulting embedding tensor from the device (e.g., GPU) back to the CPU
+    # and convert it into a NumPy array for easier handling (e.g., distance calculations)
+    query_img_embedding_np = query_img_embedding.cpu().numpy()
+    # Return the embedding as a NumPy array
+    return query_img_embedding_np
+
+# %% # Generate the embedding for the sample query image
+query_img_embedding = get_query_img_embedding(siamese_encoder, val_transform, query_img, device)
+
+# Print the shape of the resulting embedding vector (should be [1, embedding_dim])
+print("Shape of query image embedding:", query_img_embedding.shape)
+
+# %% Now, generate embeddings for all images in your "catalog" (using the validation_dataset here as a stand in for a full product catalog). The get_embeddings helper function efficiently processes the entire dataset.
+# Use the validation dataset as the "catalog" of items to search within
+catalog = validation_dataset
+
+# Use a helper function to efficiently generate embeddings for all items in the catalog
+print("Generating embeddings for the catalog...")
+embeddings = helper_utils.get_embeddings(siamese_encoder, catalog, device)
+print(f"Generated {len(embeddings)} embeddings for the catalog.")
+
+# %% Finding and Displaying Similar Items
+# With embeddings generated for the query and the entire catalog, use the find_closest helper function to identify the indices of the num_samples most similar images in the catalog based on Euclidean distance.
+# EDITABLE CELL: # Define how many similar items to retrieve
+
+num_samples = 5
+
+# %% # Use a helper function to find the indices of the items in the catalog
+# whose embeddings are closest (smallest Euclidean distance) to the query embedding
+print(f"Finding the top {num_samples} closest items...")
+closest_indices = helper_utils.find_closest(embeddings, query_img_embedding, num_samples)
+print("Indices of closest items:", closest_indices)
+
+# %% Finally, retrieve the actual images and their labels from the catalog using the closest_indices and display them. These are the top visual matches for your query image according to your trained Siamese network!
+# Loop through the indices of the closest images found
+print(f"\nDisplaying the {num_samples} most similar items found in the catalog:")
+for idx_c in closest_indices:
+    # Retrieve the image and its true label from the catalog dataset using the index
+    # The helper function likely handles converting tensor back to displayable format
+    img_c, label_idx_c = helper_utils.get_image(catalog, idx_c) # Assuming get_image returns PIL + label index
+    label_c = catalog.classes[label_idx_c] # Get class name from index
+    # Print the class label of the retrieved image
+    print(f"Retrieved Item - Class: {label_c} (Index: {idx_c})")
+    # Display the retrieved image
+    display(img_c)
+
