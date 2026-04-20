@@ -34,5 +34,13 @@ dependencies:
   - ipywidgets
   - seaborn
   - lightning
+  - torchinfo
+  - scikit-image
+  
+  # Jupyter support
+  - jupyterlab
+  - notebook
+  - ipykernel
+  - nb_conda_kernels
 
   - pip
