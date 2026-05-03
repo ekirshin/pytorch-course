@@ -28,6 +28,8 @@ dependencies:
   - lightning
   - torchinfo
   - scikit-image
+  - diffusers
+  - imageio
   
   # Jupyter support
   - jupyterlab
