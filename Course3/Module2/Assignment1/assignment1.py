@@ -404,3 +404,300 @@ helper_utils.visual_strip(upsampled)
 # Shift the map so the minimum value is 0.
 # Scale the map so the maximum value is 1 (divide by the maximum plus a small epsilon, 1e-8).
 # =============================================================================
+# GRADED FUNCTION: saliency_map
+
+def saliency_map(model, image_tensor, class_idx):
+    """
+    Generate a saliency map for a single image and class.
+
+    This function computes the gradients of the target class score with respect 
+    to the input image pixels. The resulting map highlights which pixels usually 
+    influence the model's prediction the most.
+
+    Arguments:
+        model: A trained CNN model instance; should be in evaluation mode.
+        image_tensor: Input image tensor with shape (1, 3, H, W). Must be pre-processed 
+                      consistently with the model's training data.
+        class_idx: The integer index of the specific target class logit to explain.
+
+    Returns:
+        heatmap: A torch.Tensor 2-D saliency heat-map normalised to the 
+                 range [0, 1] with shape (H, W).
+    """ 
+
+    ### START CODE HERE ###
+
+    # Create a clone of the input tensor to avoid modifying the original data
+    image_tensor = image_tensor.clone()
+    # Detach the tensor from the current computation graph to start a new tracking history
+    image_tensor = image_tensor.detach()
+    # Enable gradient tracking for the input tensor to allow backpropagation to the pixels
+    image_tensor.requires_grad_()
+
+    # Perform a forward pass of the image through the model
+    output = model(image_tensor)
+    # Extract the logit (raw score) corresponding to the target class index
+    target_logit = output[0, class_idx]
+    
+    ### END CODE HERE ###
+
+    # Clear any existing gradients in the model parameters
+    model.zero_grad()
+
+    ### START CODE HERE ###
+    
+    # Perform the backward pass to compute gradients of the target logit w.r.t the input
+    target_logit.backward()
+
+    # Compute the absolute value of the gradients and sum across the color channels (C dim)
+    grads = image_tensor.grad.abs().sum(dim=1)[0]
+
+    # Normalize the gradients to the [0, 1] range for visualization
+    # Subtract the minimum value to shift the range to start at 0
+    grads -= grads.min()
+    # Divide by the maximum value (plus a small epsilon) to scale to [0, 1]
+    grads /= grads.max() + 1e-8
+
+    ### END CODE HERE ###
+
+    # Detach the resulting heatmap from the computation graph
+    heatmap = grads.detach()
+
+    return heatmap
+
+# %% # Verify your implementation
+
+# Load and preprocess a sample image
+image_path = "./fruits_subset/Apple_Rotten/rottenApple_7.jpg"
+img = helper_utils.preprocess_image(image_path, device)
+
+# Define the target category for explanation (1 corresponds to 'rotten')
+class_idx = 1
+
+# Compute saliency map
+heatmap = saliency_map(
+    model=fruits_model,
+    image_tensor=img,
+    class_idx=class_idx
+)
+
+# Confirm the heatmap matches input dimensions and is normalized to [0, 1]
+print("Shape and Range of the heatmap:\n")
+print(f"Shape: {heatmap.shape}")
+print(f"Range: min = {heatmap.min()}, max = {heatmap.max()}")
+
+# %%
+# Now that you have confirmed your code works, you can explore! The block below allows you to run your saliency analysis on different samples. Use the paths below to see if the model focuses on the actual defects (like rot spots) or if it gets distracted by irrelevant background details.
+# Define the file path
+image_path = "./fruits_subset/Apple_Rotten/rottenApple_7.jpg"
+
+# Define the target category for explanation 
+# (0 corresponds to 'fresh', 1 corresponds to 'rotten')
+class_idx = 1
+
+# Preprocess the sample image
+img = helper_utils.preprocess_image(image_path, device)
+
+# Compute saliency map
+heatmap = saliency_map(
+    model=fruits_model,
+    image_tensor=img,
+    class_idx=class_idx
+)
+
+# Display saliency map
+helper_utils.display_saliency(image_tensor=img, heatmap=heatmap)
+
+# %%
+# =============================================================================
+# Interpreting Saliency Maps: What to Look For
+# 
+# When examining your results, keep these interpretation guidelines in mind:
+# 
+# Focus of Attention: Bright regions indicate pixels that strongly influence the prediction of the model for the target class. For a "rotten" classification, you should expect to see highlights on damaged or discolored areas of the fruit.
+# Expected Behavior: A well-trained model should highlight relevant features (e.g., brown spots, mold, holes) rather than background elements. If the saliency focuses heavily on the background, the model might be relying on spurious correlations.
+# Noise vs. Signal: Saliency maps can be visually noisy, you will often see scattered bright pixels. Focus on the overall pattern rather than individual points. Look for coherent clusters of sensitivity.
+# Complementary to CAM: Saliency maps provide pixel-level sensitivity (fine-grained), while CAM shows region-level importance (coarse-grained). Use both together for a complete picture. Saliency tells you exactly which pixels, while CAM tells you which general areas.
+# Limitations:
+# Saliency maps show sensitivity, not strictly causation.
+# Sharp edges often appear salient simply because they represent high-frequency changes, even if they are not semantically critical.
+# =============================================================================
+
+# %% 4 - Regional Attention: Class Activation Maps
+# =============================================================================
+# Saliency maps are powerful, but they can be visually noisy. They show you every single pixel that matters, which often results in a scattered "star map" of high-contrast edges. Sometimes, you want a broader answer. Instead of asking "which pixel matters?", you want to ask "which region matters?"
+# 
+# For this, you use Class Activation Maps (CAM).
+# 
+# CAMs work by combining the feature maps from the very last convolutional layer, where the model has its most advanced understanding of shapes and objects, with the final classification weights. This produces a smooth heatmap that highlights the entire object or region the model is focusing on.
+# 
+# Why "Simplified" CAM?
+# 
+# In this section, you will use a direct computation method rather than the gradient-based approach (Grad-CAM) often seen in generic tools. This is possible because your ResNet-50 inspector uses a specific architectural pattern: Global Average Pooling (GAP) followed by a fully connected layer. This structure allows you to mathematically map the weights of the final layer directly back onto the feature maps, offering a clean and efficient way to visualize attention without the need for backpropagation.
+# 
+# 
+# Exercise 4 - simplified_cam
+# You will now implement simplified_cam. This function generates a clear, region-level view of the evidence the model uses for a specific class, complementing the pixel-level sensitivity you obtained with saliency maps.
+# 
+# Your Task:
+# 
+# Register Hook:
+# 
+# Attach the save_fmap hook (provided for you) to the third convolution of the final bottleneck block in layer4 (model.layer4[-1].conv3).
+# Compute CAM:
+# 
+# Retrieve Features - Extract the captured feature maps from the fmap_holder dictionary.
+# Get Weights - Access the weight vector for the specific class_idx from the model's fully connected layer (model.fc.weight).
+# Weighted Sum - Compute the dot product between the class weights and the feature channels. You should sum over the channel dimension to produce a single 2D map. torch.einsum is an efficient tool for this.
+# ReLU - Apply ReLU to the resulting map to keep only positive contributions (implemented for you).
+# Normalize - Scale the map to the range [0, 1] (min/max normalization). Use epsilon as 1e-8.
+# Upsample:
+# 
+# Resize the map to match the input image dimensions (H, W).
+# Note: F.interpolate requires a 4D input (Batch, Channel, Height, Width), but your map is currently 2D. You will need to add two dummy dimensions before interpolating.
+# 
+# =============================================================================
+def simplified_cam(model, image_tensor, class_idx):
+    """
+    Generates a simplified Class Activation Map (CAM) for a specific image and class.
+
+    This function extracts the feature maps from the final convolutional layer 
+    and computes a weighted sum using the weights from the final fully connected 
+    layer. The resulting map highlights regions of the image that contributed 
+    most to the prediction of the target class.
+
+    Arguments:
+        model: A trained ResNet-style neural network module.
+        image_tensor: The input image tensor (1, 3, H, W), normalized for the model.
+        class_idx: The integer index of the target class to explain.
+
+    Returns:
+        heatmap: A 2-D tensor representing the class activation heatmap, 
+                 scaled to [0, 1] with the same spatial dimensions as the input.
+    """
+
+    # Initialize an empty dictionary to store the captured feature maps
+    fmap_holder = {}
+
+    # Define a hook function to detach and store the layer output during the forward pass
+    def save_fmap(_, __, output): 
+        fmap_holder["feat"] = output.detach()
+
+    ### START CODE HERE ###
+
+    # Register the forward hook on the final convolutional layer to capture features
+    hook = model.layer4[-1].conv3.register_forward_hook(save_fmap)
+
+    ### END CODE HERE ###
+
+    # Perform a forward pass with the image to trigger the hook
+    with torch.no_grad():
+        _ = model(image_tensor) 
+
+    # Remove the hook to clean up the model and stop capturing data
+    hook.remove() 
+
+    ### START CODE HERE ###
+    
+    # Retrieve the captured feature maps from the dictionary
+    feats = fmap_holder["feat"]
+    # Extract the weight vector corresponding to the target class from the FC layer
+    weight_vec = model.fc.weight[class_idx]
+
+    # Compute the weighted sum of feature maps along the channel dimension
+    # Uses Einstein summation: 'c' (channels), 'chw' (features) -> 'hw' (spatial map)
+    cam = torch.einsum("c,chw->hw", weight_vec, feats.squeeze(0))
+
+    # Apply ReLU to retain only positive contributions to the class score
+    cam = F.relu(cam) 
+    # Normalize the activation map values to the range [0, 1]
+    cam = (cam - cam.min()) / (cam.max()-cam.min() + 1e-8)
+
+    ### END CODE HERE ###
+
+    # Retrieve the spatial dimensions (Height, Width) of the original input
+    H, W = image_tensor.shape[2:]
+
+    ### START CODE HERE ###
+
+    # Upsample the low-resolution activation map to match the input image size
+    cam_up = F.interpolate( 
+        # Add batch and channel dimensions required for interpolation (1, 1, H, W)
+        cam.unsqueeze(0).unsqueeze(0),
+        # Specify the target output size matching the input image
+        size=(H, W),
+        # Use bilinear interpolation for smooth resizing
+        mode="bilinear", 
+        # Disable corner alignment to align the geometric centers of pixels
+        align_corners=False, 
+    )[0, 0] 
+
+    ### END CODE HERE ###
+
+    # Detach the result from the graph and move to CPU if necessary
+    heatmap = cam_up.cpu().detach()
+
+    return heatmap
+
+# %% # Verify your implementation
+
+# Load and preprocess a sample image
+image_path = "./fruits_subset/Apple_Rotten/rottenApple_5.jpg"
+img = helper_utils.preprocess_image(image_path, device)
+
+# Define the target category for explanation (1 corresponds to 'rotten')
+class_idx = 1
+
+# Compute CAM
+heatmap = simplified_cam(
+    model=fruits_model, 
+    image_tensor=img, 
+    class_idx=class_idx
+)
+
+# Verify shape and range
+print("Shape and Range of the CAM:\n")
+print(f"Shape: {heatmap.shape}")
+print(f"Range: min = {heatmap.min()}, max = {heatmap.max()}")
+
+# %% 
+# Now that you have confirmed your code works, you can explore! The block below allows you to generate heatmaps for different fruits. Use the paths below to see if the model's "attention" aligns with the rotten spots on the fruit, or if it is looking at the stem or background.
+
+# %% 
+# Preprocess the sample image
+image_path = "./fruits_subset/Apple_Rotten/rottenApple_2.jpg"
+
+# Define the target category for explanation 
+# (0 corresponds to 'fresh', 1 corresponds to 'rotten')
+class_idx = 1
+
+# Preprocess the sample image
+img = helper_utils.preprocess_image(image_path, device)
+
+# Compute CAM
+heatmap = simplified_cam(
+    model=fruits_model, 
+    image_tensor=img, 
+    class_idx=class_idx
+)
+
+# Display CAM
+helper_utils.display_cam(img, heatmap)
+
+# %% 5 - Comparison of Interpretability Techniques
+# =============================================================================
+# When to use each:
+# 
+# Feature Hierarchy: Use when you want to understand how a model learns, what patterns emerge at different depths, or debug training issues.
+# 
+# Saliency Maps: Use when you need precise pixel-level explanations, are concerned about adversarial vulnerabilities, or want to understand fine-grained sensitivities.
+# 
+# CAM/Grad-CAM: Use when you need human-interpretable region highlights, want to verify the model is looking at the right object, or need coarse localization for weakly-supervised tasks.
+# 
+# Pro Tip: Combine multiple techniques! For example:
+# 
+# Use CAM to verify the model focuses on the fruit (not background)
+# Use Saliency to see exactly which pixels (e.g., specific spots, edges) drive the decision
+# Use Feature Hierarchy to understand what low/mid/high-level features the model learned
+# This multi-method approach gives you comprehensive understanding of your model's behavior.
+# =============================================================================
