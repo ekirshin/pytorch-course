@@ -701,3 +701,433 @@ helper_utils.display_cam(img, heatmap)
 # Use Feature Hierarchy to understand what low/mid/high-level features the model learned
 # This multi-method approach gives you comprehensive understanding of your model's behavior.
 # =============================================================================
+# %% 6.1 - Setting up Stable Diffusio
+# =============================================================================
+# Your first step is to initialize the creative engine. You will use the Hugging Face diffusers library to load a pre-trained Stable Diffusion model. This pipeline bundles all the necessary components, the text encoder, the unet, and the variational autoencoder (VAE), into a single, easy to use object.
+# 
+# 
+# Ungraded Exercise 1 - load_sd_pipeline
+# Implement load_sd_pipeline. This function initializes the core text-to-image generation pipeline using a pre-trained model and moves it to the correct computing device.
+# 
+# Your Task:
+# 
+# Initialize the Pipeline: Use the StableDiffusionPipeline.from_pretrained method to load the model defined by pretrained_model_name_or_path=model_id.
+# Configure Precision: To optimize memory usage, you must load the model using 16-bit floating point precision.
+# Set torch_dtype to torch.float16.
+# Set the variant to "fp16".
+# Manage Loading Source:
+# Set cache_dir to "./models" to ensure the model loads from the correct local path.
+# Set local_files_only to True to prevent the pipeline from attempting to download files from the internet.
+# Device Transfer: Finally, move the initialized pipeline to the specified device (e.g., CUDA or CPU) using the .to() method.
+# =============================================================================
+def load_sd_pipeline(device, model_id="stabilityai/stable-diffusion-2-base"):
+    """
+    Initializes the Stable Diffusion pipeline from a pretrained model identifier 
+    and transfers it to the specified computing device.
+
+    Arguments:
+        device: The target device (e.g., 'cuda', 'mps', 'cpu') for model execution.
+        model_id: The repository ID of the pretrained model to load.
+    """
+    ### START CODE HERE ###
+    
+    # Initialize the pipeline using 16-bit floating point precision and load from local cache
+    pipe = StableDiffusionPipeline.from_pretrained(
+        pretrained_model_name_or_path=model_id,
+        torch_dtype=torch.float16,
+        variant="fp16",
+        cache_dir="./models",
+        local_files_only=True 
+    ).to(device) 
+    
+    ### END CODE HERE ###
+    
+    return pipe
+
+# %% # INITIALIZE pipe
+
+# Clear any existing reference to pipe to free up GPU/CPU memory before initializing
+if "pipe" in globals():
+    del pipe
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+try:
+    # Check if model snapshot exists, otherwise extract it
+    helper_utils.check_model_snapshot()
+    
+    # Attempt to initialize the Stable Diffusion pipeline on the detected device
+    pipe = load_sd_pipeline(device)
+
+    print("\nLoading Complete!")
+    
+except Exception as e:
+    # Catch and report errors during model initialization or weight loading
+    print(f"""\
+    An error occurred while loading the pipeline.
+
+    Refer the solutions for the correct implementation.
+    
+    Error: {e}
+    """)
+    
+    # Clear memory if the pipeline failed to load or existed previously
+    if "pipe" in globals():
+        del pipe
+        
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # Ensure pipe is set to None to prevent subsequent errors in generation cells
+    pipe = None
+
+
+# %% 6.2 - Generating Synthetic Data
+# =============================================================================
+# Now that your engine is running, you need a control panel. You will create a function that takes your text description, like "A mango with a wormhole", and turns it into a pixel-perfect image.
+# 
+# This function will handle the critical details of reproducibility. In scientific and industrial contexts, you often need to recreate a specific result. By controlling the random seed, you ensure that if you find a perfect synthetic example of a rare defect, you can generate it again exactly as it appeared.
+# 
+# 
+# Ungraded Exercise 2 - generate_sd_image
+# Implement generate_sd_image. This function orchestrates the actual generation process, running the text prompt through the diffusion model to produce a visual output.
+# 
+# Your Task:
+# 
+# Setup Reproducibility:
+# Create a torch.Generator targeted at the correct device (which you can retrieve from pipe.device).
+# Manually set the seed of this generator using the integer provided in the seed argument. This ensures that if you run the code again with the same settings, you get the exact same image.
+# Run Inference:
+# Call the pipe object you initialized earlier.
+# Pass in the prompt, negative_prompt, and generator.
+# Set num_inference_steps to the steps argument.
+# Access the .images attribute of the returned object and select the first item (index 0) to get the final PIL image.
+# 
+# =============================================================================
+def generate_sd_image(pipe, prompt, negative_prompt, seed, steps, save_dir="synthetic"):
+    """
+    Generates a single image from a text prompt using a pre-loaded Stable Diffusion pipeline.
+
+    This function sets a deterministic seed for reproducibility, runs the inference 
+    process, and saves the resulting image to a structured directory based on the prompt.
+
+    Arguments:
+        pipe: The initialized Stable Diffusion pipeline instance.
+        prompt: The positive text description of the desired image.
+        negative_prompt: Text description of elements to exclude from the image.
+        seed: An integer value to initialize the random number generator.
+        steps: The number of denoising steps to perform during inference.
+        save_dir: The root directory path where the generated image will be saved.
+
+    Returns:
+        image: The generated PIL Image object.
+    """
+    # Retrieve the computing device (CPU/GPU) associated with the pipeline
+    device = pipe.device
+    
+    ### START CODE HERE ###
+
+    # Create a random number generator on the specific device and set the seed manually
+    generator = None
+    
+    # Run the pipeline to generate the image based on the provided prompts and configuration
+    image = None(
+        prompt=None,
+        negative_prompt=None,
+        num_inference_steps=None,
+        generator=None,
+    ).images[0] 
+
+    ### END CODE HERE ###
+
+    # Create a filename slug using the first three words of the prompt
+    slug = "_".join(prompt.lower().split()[:3]) 
+    
+    # Construct the full output directory path
+    out_dir = Path(save_dir) / slug 
+    
+    # Create the directory if it does not exist, including parent directories
+    out_dir.mkdir(parents=True, exist_ok=True) 
+    
+    # Define the complete file path for the image
+    out_path = out_dir / f"img_{seed}.png" 
+    
+    # Save the generated image to the file system
+    image.save(out_path)
+
+    # Log the save location to the console
+    print(f"\nImage saved to {out_path}\n")
+
+    return image
+
+# %%
+def generate_sd_image(pipe, prompt, negative_prompt, seed, steps, save_dir="synthetic"):
+    """
+    Generates a single image from a text prompt using a pre-loaded Stable Diffusion pipeline.
+
+    This function sets a deterministic seed for reproducibility, runs the inference 
+    process, and saves the resulting image to a structured directory based on the prompt.
+
+    Arguments:
+        pipe: The initialized Stable Diffusion pipeline instance.
+        prompt: The positive text description of the desired image.
+        negative_prompt: Text description of elements to exclude from the image.
+        seed: An integer value to initialize the random number generator.
+        steps: The number of denoising steps to perform during inference.
+        save_dir: The root directory path where the generated image will be saved.
+
+    Returns:
+        image: The generated PIL Image object.
+    """
+    # Retrieve the computing device (CPU/GPU) associated with the pipeline
+    device = pipe.device
+    
+    ### START CODE HERE ###
+
+    # Create a random number generator on the specific device and set the seed manually
+    generator = torch.Generator(device=device).manual_seed(seed)
+    
+    # Run the pipeline to generate the image based on the provided prompts and configuration
+    image = pipe(
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        num_inference_steps=steps,
+        generator=generator,
+    ).images[0] 
+
+    ### END CODE HERE ###
+
+    # Create a filename slug using the first three words of the prompt
+    slug = "_".join(prompt.lower().split()[:3]) 
+    
+    # Construct the full output directory path
+    out_dir = Path(save_dir) / slug 
+    
+    # Create the directory if it does not exist, including parent directories
+    out_dir.mkdir(parents=True, exist_ok=True) 
+    
+    # Define the complete file path for the image
+    out_path = out_dir / f"img_{seed}.png" 
+    
+    # Save the generated image to the file system
+    image.save(out_path)
+
+    # Log the save location to the console
+    print(f"\nImage saved to {out_path}\n")
+
+    return image
+# %%
+# Text description of the desired synthetic fruit image
+prompt = "A mango with a small hole made by a worm in the middle."
+
+# Features or styles to be excluded from the generated output
+negative_prompt = "Fresh, intact."
+
+# Seed for reproducible results
+seed = 42
+
+# Number of steps; higher values typically improve quality
+steps = 50
+
+# %%
+try:
+    # Execute the diffusion process to generate a synthetic fruit image
+    img = generate_sd_image(
+        pipe=pipe,
+        prompt=prompt, 
+        negative_prompt=negative_prompt,
+        seed=seed, 
+        steps=steps
+    )
+    
+    # Render the final generated PIL image without axis labels
+    plt.axis('off')
+    plt.imshow(img)
+    
+except Exception as e:
+    # Handle and log any errors occurring during the inference process
+    print(f"""\
+    An error occurred in the generation.
+
+    Refer the solutions for the correct implementation.
+    
+    Error: {e}
+    """)
+    
+    # Clear memory if the pipeline failed to load or existed previously
+    if "pipe" in globals():
+        del pipe
+        
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # Ensure pipe is set to None to prevent subsequent errors in generation cells
+    pipe = None
+
+# %% 6.3 - Peeking into the Diffusion Process
+# =============================================================================
+# You have generated a final image, but the magic happens in the steps between pure noise and the final pixel. Stable Diffusion works by iteratively removing noise, a process called denoising. It starts with a tensor of random static and, over a series of steps (usually 20–50), gently nudges the pixel values until they match the patterns requested in your text prompt.
+# 
+# Visualizing this evolution is not just cool; it is a form of debugging. It helps you see when the model decides on the shape of the fruit versus when it refines the texture of the skin. To do this, you need to interrupt the pipeline while it runs.
+# 
+# 
+# Ungraded Exercise 3 - denoising_movie
+# Implement denoising_movie. This function visualizes how the image evolves during the diffusion process by intercepting the model at specific steps. You will use a callback mechanism to "peek" inside the pipeline, decode the intermediate latent vectors into viewable images, and assemble them into a grid.
+# 
+# Your Task:
+# 
+# Define the Callback:
+# Create a function grab_frame that accepts the standard callback arguments (pipeline, step_idx, timestep, callback_kwargs).
+# Check the Step: Only proceed if step_idx is in your list of capture_steps.
+# Retrieve Latents: Extract the latents tensor from the callback_kwargs dictionary.
+# Decode:
+# Scale the latents by dividing them by pipe.vae.config.scaling_factor.
+# Pass the scaled latents to the VAE decoder (pipe.vae.decode).
+# Set return_dict=False to get the raw tuple output.
+# Post-process: Use pipe.image_processor.postprocess to convert the decoded tensor into a PIL image (set output_type="pil").
+# Store: Save the resulting image in the frames dictionary using step_idx as the key.
+# Return: You must return callback_kwargs at the end of the function.
+# 
+# Run the Pipeline:
+# Call the pipe with the prompt, num_inference_steps, and generator.
+# Attach the Callback: Pass your grab_frame function to the callback_on_step_end argument.
+# 
+# Order Results: Create a list called ordered_frames containing the images from the frames dictionary, sorted according to the order in capture_steps.
+# =============================================================================
+def denoising_movie(pipe, prompt, seed, steps, capture_steps, save_grid_path="timelapse.png"):
+    """
+    Captures intermediate denoising frames from the Stable Diffusion process and 
+    assembles them into a grid image.
+
+    This function utilizes a callback mechanism to intercept the latent vectors 
+    at specific steps, decodes them into images, and saves a composite 2x2 grid 
+    visualization.
+
+    Arguments:
+        pipe: The pre-loaded Stable Diffusion pipeline instance.
+        prompt: The positive text description for generation.
+        seed: An integer value for deterministic random noise generation.
+        steps: The total number of inference steps to perform.
+        capture_steps: A list of integer indices specifying which steps to capture.
+        save_grid_path: The file path where the final grid image will be saved.
+
+    Returns:
+        ordered_frames: A list of PIL Image objects corresponding to the captured steps.
+    """
+
+    # Dictionary to store the captured frames indexed by step number
+    frames = {}
+
+    ### START CODE HERE ###
+    
+    # Define the callback function to grab frames
+    def grab_frame(pipeline, step_idx, timestep, callback_kwargs): 
+        
+        # Check if the current step is one you want to save
+        if step_idx in capture_steps:
+            
+            # Extract the latent representation from the callback arguments
+            latents = callback_kwargs["latents"]
+            
+            with torch.no_grad():
+                # Decode the latents using the VAE (Variational Autoencoder)
+                img = pipe.vae.decode(
+                    # Scale the latents by the VAE's scaling factor before decoding
+                    latents / pipe.vae.config.scaling_factor,
+                    # Ensure the output is a tensor, not a dictionary
+                    return_dict=False
+                )[0] 
+            
+            # Convert the raw tensor output into a PIL image
+            pil = pipe.image_processor.postprocess(img, output_type="pil")[0]
+            
+            # Store the result
+            frames[step_idx] = pil
+            
+        return callback_kwargs
+
+    ### END CODE HERE ###
+
+    # Initialize the generator for reproducibility
+    generator = torch.Generator(pipe.device).manual_seed(seed)
+
+    ### START CODE HERE ###
+
+    # Run the pipeline with the callback attached
+    _ = pipe( 
+        prompt=prompt,
+        num_inference_steps=steps,
+        generator=generator,
+        # Attach the function to run at the end of every step
+        callback_on_step_end=grab_frame,
+    ) 
+
+    # Order frames according to the requested `capture_steps` list
+    ordered_frames = [frames[s] for s in capture_steps]
+
+    ### END CODE HERE ###
+    
+    # Build grid (Standard PIL image processing)
+    w, h = ordered_frames[0].size 
+    grid = Image.new("RGB", (w * 2, h * 2)) 
+    for idx, frame in enumerate(ordered_frames): 
+        row, col = divmod(idx, 2) 
+        grid.paste(frame, (col * w, row * h)) 
+
+    grid.save(save_grid_path) 
+    print(f"Timelapse grid saved to {save_grid_path}") 
+
+    return ordered_frames
+
+# %% 
+# Target subject for the denoising visualization
+prompt = "A healthy mango."
+
+# Fixed seed to ensure the same noise pattern is used for the timelapse
+seed = 42
+
+# Total number of diffusion iterations
+steps = 50
+
+# Specific iteration indices to capture for the final grid
+capture_steps = [0, 10, 20, 30, 50]
+
+# %%
+try:
+    # Run the diffusion process and capture latents at specific intervals
+    ordered_frames = denoising_movie(
+        pipe=pipe,
+        prompt=prompt,
+        seed=seed, 
+        steps=steps,
+        capture_steps=capture_steps
+    )
+
+    # Load and display the composite grid showing the image evolution
+    grid_image = plt.imread("timelapse.png")
+    plt.axis('off')
+    plt.imshow(grid_image)
+    
+except Exception as e:
+    # Handle failures in the callback or VAE decoding process
+    print(f"""\
+    An error occurred in the denoising.
+
+    Refer the solutions for the correct implementation.
+    
+    Error: {e}
+    """)
+    
+    # Clear memory if the pipeline failed to load or existed previously
+    if "pipe" in globals():
+        del pipe
+        
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # Ensure pipe is set to None to prevent subsequent errors in generation cells
+    pipe = None
