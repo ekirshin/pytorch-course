@@ -439,3 +439,189 @@ print("\nAttention Weights Matrix (rows: query token, columns: attended token):"
 for i, w in enumerate(tokens):
     row = ["{:.2f}".format(a) for a in attn[0, i].detach().cpu().numpy()]
     print(f"{w:>8} attends to -> {row}")
+
+# %% 2.2 Self-Attention with Position Embeddings
+# =============================================================================
+# Attention is Position-Blind
+# Self-attention lets each word "look at" every other word in the sequence—but on its own, it treats the input like an unordered set of words. The attention mechanism itself has no inherent notion of sequence or position. Consider these two sentences:
+# 
+# "The cat chased the dog"
+# "The dog chased the cat"
+# Without position information, self-attention would produce identical representations for both sentences since they contain the same words! This is clearly wrong—word order fundamentally changes meaning.
+# 
+# The Solution: Adding Position Information
+# To help the model distinguish word order, you give it a positional embedding: a unique vector for each position in the input sequence. These position vectors act like GPS coordinates for words, telling the model not just what each word is, but where it appears in the sequence:
+# 
+# Word Embedding:     [cat] → [0.2, 0.5, -0.1, ...]  (what the word means)
+# Position Embedding: [pos 2] → [0.1, -0.3, 0.4, ...]  (where it appears)
+#                            ↓
+# Combined Input:     [0.3, 0.2, 0.3, ...]  (meaning + position)
+# By adding position embeddings to word embeddings, you create position-aware representations that allow self-attention to learn different patterns based on word order.
+# 
+# Learned vs. Sinusoidal Positional Encodings
+# Note: In this notebook, you're using learned positional embeddings (nn.Embedding) - this is the approach shown in the course lectures. The model learns the best position representations during training, just like it learns word embeddings.
+# 
+# However, in future notebooks (starting with the Encoder lab), you'll see an alternative approach: sinusoidal positional encodings. Instead of learning position embeddings, sinusoidal encodings use fixed mathematical functions (sine and cosine waves at different frequencies) to represent positions.
+# 
+# Both approaches work well, but they have different trade-offs:
+# 
+# Learned Embeddings (used in this lab):
+# 
+# Flexible and can adapt to your specific data patterns
+# Simple to understand and implement
+# Limited to the maximum sequence length seen during training
+# Require max_len × d_model parameters
+# Sinusoidal Encodings (used in later labs):
+# 
+# Fixed mathematical pattern that extends infinitely—can handle sequences longer than seen during training
+# Zero learnable parameters—the encodings are completely deterministic
+# Enable the model to easily learn relative positions (e.g., "3 words to the left")
+# Different frequencies capture both fine-grained (nearby words) and coarse-grained (distant words) relationships
+# Have become the standard in modern transformer implementations
+# For this introduction to attention, learned embeddings are simpler to understand and work perfectly fine for our fixed-length sequences. You'll explore sinusoidal encodings in depth in the next lab.
+# 
+# The Complete Architecture
+# The code below implements a complete position-aware attention model with four key components:
+# 
+# Token Embeddings (tok_embed): Converts token IDs to semantic vectors capturing word meaning
+# Position Embeddings (pos_embed): Learnable vectors for each position (1st word, 2nd word, etc.)
+# Self-Attention (attn): Computes context-aware representations using the manual attention from earlier
+# Output Projection (fc): Maps the final hidden state to vocabulary size for next-word prediction
+# The forward pass:
+# 
+# Generates position indices (0, 1, 2, ...) for each token in the batch
+# Looks up both word and position embeddings
+# Sums them together (this is how position information gets injected)
+# Applies self-attention to these position-aware embeddings
+# Takes the last position's output to predict the next word
+# Projects to vocabulary size to get prediction scores
+# This architecture demonstrates the minimal components needed for a position-aware language model—the foundation that, when scaled up with multiple layers and heads, becomes the transformer models powering modern NLP.
+# 
+# =============================================================================
+class SelfAttnWithPositionalEmbedding(nn.Module):
+    """
+    A neural network module that combines token and positional embeddings with self-attention.
+
+    Args:
+        vocab_size: The total number of unique tokens in the vocabulary.
+        seq_len: The fixed length of input sequences.
+        emb_dim: The dimensionality of the embedding vectors.
+    """
+    def __init__(self, vocab_size, seq_len, emb_dim):
+        """
+        Initializes the embedding layers, attention mechanism, and output projection.
+
+        Args:
+            vocab_size: Size of the vocabulary.
+            seq_len: Maximum length of the sequence.
+            emb_dim: Dimension of the embeddings.
+        """
+        super().__init__()
+        # Table for mapping token indices to continuous vector representations
+        self.tok_embed = nn.Embedding(vocab_size, emb_dim)
+        # Learnable table for mapping sequence positions to vector representations
+        self.pos_embed = nn.Embedding(seq_len, emb_dim)
+        # Self-attention module for capturing dependencies between tokens
+        self.attn = ManualSelfAttention(emb_dim)
+        # Linear layer to project context-aware representations back to vocabulary size
+        self.fc = nn.Linear(emb_dim, vocab_size)
+        # Internal storage for the maximum sequence length
+        self.seq_len = seq_len
+
+    def forward(self, token_ids):
+        """
+        Processes input token sequences to produce prediction logits and attention weights.
+
+        Args:
+            token_ids: A tensor of token indices with shape [batch_size, seq_len].
+
+        Returns:
+            logits: Predicted scores for the next token based on the final hidden state.
+            attn_weights: The attention weight matrix from the self-attention layer.
+        """
+        batch_size, seq_len = token_ids.shape
+        # Generate a range of indices representing the position of each token in the sequence
+        positions = torch.arange(seq_len, device=token_ids.device).unsqueeze(0).expand(batch_size, seq_len)
+        # Retrieve word-level embedding vectors for the input tokens
+        word_vecs = self.tok_embed(token_ids)
+        # Retrieve learnable positional embedding vectors for each sequence index
+        pos_vecs = self.pos_embed(positions)
+        # Combine word and position information via element-wise summation
+        input_vecs = word_vecs + pos_vecs
+        # Pass the combined embeddings through the self-attention mechanism
+        attn_out, attn_weights = self.attn(input_vecs)
+        # Extract the hidden representation corresponding to the final token in the sequence
+        last_hidden = attn_out[:, -1, :]
+        # Transform the final hidden state into prediction logits over the vocabulary
+        logits = self.fc(last_hidden)
+        # Provide the prediction scores and the attention weights for evaluation or analysis
+        return logits, attn_weights
+    
+# %%
+x = torch.tensor([[[ 0.12, -0.55,  0.33,  0.10],
+                   [-0.44,  0.91, -0.12, -0.77],
+                   [ 0.48,  0.02,  0.05,  0.39],
+                   [ 0.12, -0.55,  0.33,  0.10],
+                   [-0.30,  0.14, -0.70,  0.81]]])  # [1, 5, 4]
+
+attn = ManualSelfAttention(d=4)
+out, attn_weights = attn(x)
+
+print("Attention weights matrix (attn_weights):\n", attn_weights[0].detach().numpy())
+print('\nExplanation:')
+print("Each row i shows the attention distribution (softmaxed) over all positions in the input sequence,")
+print("when computing the updated representation for token i. Rows sum to 1.\n")
+
+print("Self-attention output (out):\n", out[0].detach().numpy())
+print('\nExplanation:')
+print("Each row is the new vector for input position i, computed as a weighted sum")
+print("of the original value vectors, using that row from the attention weights matrix as weights.\n")   
+
+# %% 2.3 A Practical Example
+# =============================================================================
+# Now you’ll see self-attention with positional encoding in action!
+# In this section, you’ll:
+# 
+# Instantiate your custom self-attention model,
+# Select a real sample from your dataset,
+# Run the model to obtain predictions and attention maps,
+# Visualize exactly how the model "pays attention" to different words in the input.
+# The code below walks you through these steps. You can run it before and after training to see how the model's focus changes as it learns.
+# =============================================================================
+# 1. Set up model parameters and create your attention model
+vocab_size = len(vocab)
+embed_dim = 8         # Number of embedding dimensions (try 4, 8, 16, etc.)
+seq_len = SEQ_LEN     # Length of your training window
+model = SelfAttnWithPositionalEmbedding(vocab_size, seq_len, embed_dim)
+
+# %%
+def plot_attention(attn_weights, tokens, title="Self-Attention Map"):
+    """
+    Visualizes the self-attention weights for a sequence using a heatmap.
+    
+    Args:
+        attn_weights: A tensor of attention scores, usually of shape [batch, seq_len, seq_len].
+        tokens: A list of strings representing the tokens for labeling the axes.
+        title: A string to be used as the title of the generated plot.
+
+    Returns:
+        None. This function displays a plot directly.
+    """
+    # Extract attention weights for the first batch entry and transfer to host memory
+    aw = attn_weights[0].detach().cpu().numpy()
+    # Initialize the figure with dimensions scaled to the number of tokens
+    plt.figure(figsize=(1.2 * len(tokens), 5))
+    # Render the attention matrix as a heatmap with a blue color gradient
+    plt.imshow(aw, cmap='Blues')
+    # Assign token strings to the horizontal axis with a specific rotation for readability
+    plt.xticks(range(len(tokens)), tokens, rotation=45)
+    # Assign token strings to the vertical axis
+    plt.yticks(range(len(tokens)), tokens)
+    # Include a legend showing the mapping of colors to attention intensity
+    plt.colorbar()
+    # Set the provided title for the visualization
+    plt.title(title)
+    # Adjust layout parameters to prevent label clipping
+    plt.tight_layout()
+    # Render the final visualization to the screen
+    plt.show()
