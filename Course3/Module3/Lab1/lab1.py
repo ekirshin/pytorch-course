@@ -625,3 +625,118 @@ def plot_attention(attn_weights, tokens, title="Self-Attention Map"):
     plt.tight_layout()
     # Render the final visualization to the screen
     plt.show()
+
+# %%
+# 1. Select a sample input from your training data
+ex_ix = 0  # or any valid index into your windowed input dataset
+input_ids = inputs[ex_ix]                          # e.g., [2, 3, 4, 2]
+tokens = [idx2word[i] for i in input_ids]          # Human-readable tokens
+
+model.eval()
+x_example = torch.tensor([input_ids], dtype=torch.long)  # [batch, seq]
+
+with torch.no_grad():
+    logits, attn_weights = model(x_example)
+
+# 3. Plot attention map before OR after training
+plot_attention(attn_weights, tokens, title="Self-Attention Map")
+
+# %% 2.4 The Training Loop
+# =============================================================================
+# Now that you have your model, data, and attention visualization tools ready, it’s time to train your model!
+# You’ll use a classic PyTorch training loop that:
+# 
+# Batches your data for efficient processing,
+# Runs each batch through the model,
+# Uses the loss function to measure how well your model predicts the next word,
+# Updates the model parameters using the Adam optimizer,
+# And tracks your progress using a live progress bar.
+# As the epochs progress, you should see the average loss drop—evidence that your model is learning to predict the next word given context!
+# =============================================================================
+def train_model(model, loader, loss_fn, optimizer, epochs=20, device='cpu'):
+    """
+    Executes the training loop for a given model over a specified number of epochs.
+
+    Args:
+        model: The neural network model to be trained.
+        loader: The DataLoader providing batches of training data.
+        loss_fn: The criterion used to calculate the model error.
+        optimizer: The optimization algorithm used to update model weights.
+        epochs: The total number of complete passes through the training dataset.
+        device: The hardware device (e.g., 'cpu' or 'cuda') to perform computations on.
+
+    Returns:
+        None. This function performs in-place updates to the model weights.
+    """
+    # Transfer the model parameters to the specified computation device
+    model.to(device)
+    # Iterate through the training process for the defined number of epochs
+    for epoch in range(epochs):
+        # Configure the model for training mode
+        model.train()
+        # Initialize an accumulator for the total loss across the epoch
+        total_loss = 0
+        # Iterate through the data batches with a progress bar visualization
+        with tqdm(loader, desc=f"Epoch {epoch+1}/{epochs}") as pbar:
+            for xb, yb in pbar:
+                # Move the input and target tensors to the active device
+                xb, yb = xb.to(device), yb.to(device)
+                # Reset the gradients of all optimized parameters
+                optimizer.zero_grad()
+                # Execute the forward pass to obtain prediction logits
+                logits, _ = model(xb)
+                # Calculate the difference between predictions and ground truth labels
+                loss = loss_fn(logits, yb)
+                # Perform backpropagation to compute gradients for the current batch
+                loss.backward()
+                # Apply the gradients to update the model parameters
+                optimizer.step()
+                # Sum the loss for the batch weighted by the batch size
+                total_loss += loss.item() * xb.size(0)
+                # Update the progress bar with the current batch loss
+                pbar.set_postfix(loss=loss.item())
+        # Compute the mean loss over the entire dataset for the current epoch
+        avg_loss = total_loss / len(loader.dataset)
+        # Output the performance summary for the completed epoch
+        print(f"Epoch {epoch+1}: avg loss = {avg_loss:.4f}")
+        
+# %%
+# Example usage:
+optimizer = optim.Adam(model.parameters(), lr=0.01)     # Adam is a popular optimizer for NLP
+loss_fn = nn.CrossEntropyLoss()                         # Classic loss for next-token prediction
+
+# Assume 'loader' is your DataLoader for (input_window, target_next_token) pairs,
+# and 'device' is set to "cuda" if available, else "cpu"
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+train_model(model, loader, loss_fn, optimizer, epochs=25, device=device)        
+
+# %%
+# 1. Select a sample input from your training data
+ex_ix = 0  # or any valid index into your windowed input dataset
+input_ids = inputs[ex_ix]                          # e.g., [2, 3, 4, 2]
+tokens = [idx2word[i] for i in input_ids]          # Human-readable tokens
+
+model.eval()
+x_example = torch.tensor([input_ids], dtype=torch.long, device = device)  # [batch, seq]
+
+with torch.no_grad():
+    logits, attn_weights = model(x_example)
+
+# 3. Plot attention map before OR after training
+plot_attention(attn_weights, tokens, title="Self-Attention Map")
+
+# %%
+# =============================================================================
+# In the input sequence—"the dog chased the"—the model starts by assigning relatively even attention to all tokens, meaning each word's new representation is influenced by almost all other words. This is shown in the first (before training) map, where each row has smoothly distributed blues, and no single cell stands out.
+# 
+# However, after training, the map changes dramatically: you see much darker squares in particular positions of each row. For example, the first "the" might now strongly attend to "dog" while "dog" might heavily attend to "chased" and so on. What this means is that the model has learned, through exposure to many sentence patterns, that certain words in this context are especially important for predicting or understanding others.
+# 
+# In practical terms:
+# 
+# When the model processes "the" it recognizes from training that "dog" is the most relevant context in this position—perhaps because "the dog" is a frequent phrase structure.
+# When it processes "dog" it attends more strongly to "chased" learning that verbs often follow nouns in your data.
+# The strong attention from the last "the" to "dog" (or "chased" depending on weights) reflects the model's understanding of typical sentence continuations in this specific dataset.
+# So, this focused attention after training visually confirms that the self-attention mechanism has picked up on real relationships in your sentence structure, allowing the model to make smarter predictions by leveraging learned language patterns, not just treating all words equally.
+# 
+# =============================================================================
+
