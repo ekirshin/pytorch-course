@@ -739,4 +739,628 @@ plot_attention(attn_weights, tokens, title="Self-Attention Map")
 # So, this focused attention after training visually confirms that the self-attention mechanism has picked up on real relationships in your sentence structure, allowing the model to make smarter predictions by leveraging learned language patterns, not just treating all words equally.
 # 
 # =============================================================================
+# %% 2.5 Predicting Multiple Next Words
+# =============================================================================
+# After training, you want to see your model in action—not just on a single token, but generating entire continuations from a given prompt.
+# 
+# The function below takes a starting sentence, uses your tokenizer to split it into tokens, and then generates as many new words as you want, one at a time. Each prediction uses the most recent seq_len words as context, just like during training. The function maps between words and token IDs using your vocabulary.
+# 
+# This allows you to explore how your self-attention model “writes” language, step by step!
+# =============================================================================
+def generate_next_words(model, sentence, tokenizer, word2idx, idx2word, max_tokens=5, seq_len=4, device='cpu'):
+    """
+    Predicts and appends subsequent tokens to a given input sequence using a trained model.
+
+    Args:
+        model: The trained neural network used for prediction.
+        sentence: The initial input string to start generation from.
+        tokenizer: A callable object used to convert strings into tokens.
+        word2idx: A dictionary mapping token strings to their respective integer indices.
+        idx2word: A dictionary mapping integer indices back to their token strings.
+        max_tokens: The total number of new tokens to be generated.
+        seq_len: The fixed context window size required by the model.
+        device: The hardware device ('cpu' or 'cuda') to perform inference on.
+
+    Returns:
+        generated: A list of strings containing the original tokens plus the newly predicted tokens.
+    """
+    # Set the model to evaluation mode to disable training-specific behaviors like dropout
+    model.eval()
+    # Convert the raw input sentence into a list of individual tokens
+    generated = tokenizer(sentence)
+
+    # Iteratively predict the next token for the specified number of steps
+    for _ in range(max_tokens):
+        # Extract the most recent tokens to fit the model's context length, padding if necessary
+        window = generated[-seq_len:] if len(generated) >= seq_len \
+                 else ['<pad>'] * (seq_len - len(generated)) + generated
+
+        # Map window tokens to indices, using the unknown token marker for missing words
+        input_ids = torch.tensor([[word2idx.get(w, word2idx['<unk>']) for w in window]], dtype=torch.long).to(device)
+
+        # Disable gradient calculation to save memory and compute during inference
+        with torch.no_grad():
+            # Perform a forward pass to obtain prediction logits
+            logits, _ = model(input_ids)
+            # Select the token index with the highest predicted probability
+            next_id = logits.argmax(dim=-1).item()
+
+        # Retrieve the string representation of the predicted token index
+        next_word = idx2word[next_id]
+        # Append the new word to the sequence for the next iteration of context
+        generated.append(next_word)
+
+    # Provide the full list of tokens including the generated sequence
+    return generated
+
+# %%
+# Example usage:
+sentence = "the dog chased the"
+output = generate_next_words(model, sentence, tokenizer, word2idx, idx2word, max_tokens=1, seq_len=SEQ_LEN, device=device)
+print("Generated sequence:", " ".join(output))
+
+# %% 3 - To Train, or Not to Train: A Shakespeare Generator Example
+# =============================================================================
+# Now you’ll put all the pieces together for a real application:
+# a mini “Shakespeare Generator” trained on actual lines from the Bard’s plays.
+# 
+# In this section, you’ll apply your attention-based model to generate new Shakespearean text.
+# You'll use the tools and code you built above to:
+# 
+# Prepare and encode the Shakespeare dataset
+# Train your self-attention model on it
+# Generate new lines of “Shakespeare” by predicting multiple words from a chosen prompt
+# Let’s see how your custom transformer becomes a playwright!
+# =============================================================================
+
+# %% 3.1 Data Preparation
+# =============================================================================
+# To train your model on real Shakespearean language, you first need to get the dataset and inspect its format. In this step, you’ll automatically download a classic, open-source collection of Shakespeare’s works if it’s not already present. You’ll also peek at the start of the file to understand the kind of text you’re working with.
+# 
+# This raw text will form the basis for all your training and generation experiments.
+# =============================================================================
+# Download if needed
+url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+filename = "shakespeare.txt"
+
+# Check if file already exists
+if os.path.exists(filename):
+    print(f"'{filename}' already exists, skipping download.\n")
+else:
+    print(f"Downloading '{filename}'...")
+    urllib.request.urlretrieve(url, filename)
+    print(f"Download complete!\n")
+
+# Read the text
+with open(filename, "r", encoding="utf-8") as f:
+    text = f.read()
+
+print(text[:300])  # Just peek at the start
+
+# %% 
+# =============================================================================
+# Next, you’ll need to split Shakespeare’s text into tokens so your model can process it.
+# This custom tokenizer is designed to:
+# 
+# Replace every line break (\n) with a special <nl> token, so your model can learn line boundaries or poetic structure if needed.
+# Split the text into words (including contractions), standalone punctuation marks, and <nl> as individual tokens.
+# This approach gives your model clear, structured input ready for building a vocabulary and training.
+# 
+# =============================================================================
+class ShakespeareTokenizer:
+    """
+    A specialized tokenizer designed for processing theatrical or poetic text.
+    """
+    def __call__(self, text):
+        """
+        Processes the input text into a specific list of tokens.
+
+        Args:
+            text: The raw string to be tokenized.
+
+        Returns:
+            A list of strings containing words, contractions, special line 
+            break tokens, and punctuation marks.
+        """
+        # Substitute newline characters with a identifiable string token
+        text = text.replace('\n', ' <nl> ')
+        # Extract word characters, possessives, special tokens, and symbols using regex
+        return re.findall(r"\w+(?:'\w+)?|<nl>|[^\w\s]", text)
+    
+# %% # Instantiate your tokenizer
+tokenizer = ShakespeareTokenizer()
+
+# Build vocabulary from all Shakespeare lines using your tokenizer
+vocab, word2idx, idx2word = build_vocab([text], tokenizer, min_freq=1)
+print("Vocab size:", len(vocab))
+print("First 20 vocab words:", vocab[:20])
+    
+# %%
+# =============================================================================
+# To prepare your data for training, you need to break up the full Shakespeare text into many (input, target) pairs using a sliding window approach:
+# 
+# Each input consists of a sequence of SEQ_LEN consecutive tokens.
+# The target is the immediate next token that follows this window in the text.
+# By sliding this window over the entire dataset, you create thousands of training pairs that help your model learn the flow and structure of real language—even across line breaks and scene changes.
+# 
+# Below, you’ll build these pairs and print out an example to see exactly what your model will use as context and what it's being trained to predict.
+# 
+# =============================================================================
+SEQ_LEN = 25
+tokens = tokenizer(text)    # Tokenize the full text as one sequence!
+inputs = []
+targets = []
+for i in range(len(tokens) - SEQ_LEN):
+    window = tokens[i:i+SEQ_LEN]
+    target = tokens[i+SEQ_LEN]
+    input_ids = [word2idx.get(w, word2idx['<unk>']) for w in window]
+    target_id = word2idx.get(target, word2idx['<unk>'])
+    inputs.append(input_ids)
+    targets.append(target_id)
+        
+print("Number of (input, target) pairs:", len(inputs))
+print("Example input:", [idx2word[i] for i in inputs[0]])
+print("Example target:", idx2word[targets[0]])
+
+# %% 3.2 Building The Dataset
+# =============================================================================
+# With your (input, target) pairs ready, you now need to convert them into a format that's easy for PyTorch to use during training.
+# 
+# By defining a custom ShakespeareDataset, you make sure each example is quickly and reliably available by index, allowing PyTorch's DataLoader to:
+# 
+# batch sequences together,
+# shuffle the training data,
+# and prepare everything for efficient model training.
+# This setup is not only standard for PyTorch workflows, but also makes scaling up to bigger datasets or experiments much easier.
+# =============================================================================
+class ShakespeareDataset(Dataset):
+    """
+    A dataset class for handling tokenized text sequences and their corresponding targets.
+
+    Args:
+        inputs: A list or array of sequence windows representing the input data.
+        targets: A list or array of labels or next-word indices corresponding to the inputs.
+    """
+    def __init__(self, inputs, targets):
+        """
+        Initializes the dataset by converting input and target data into tensors.
+
+        Args:
+            inputs: The raw input sequences.
+            targets: The ground truth labels for the sequences.
+        """
+        # Maintain inputs and targets as long tensors to ensure compatibility with embedding layers
+        self.inputs = torch.tensor(inputs, dtype=torch.long)
+        # Store the target labels as long tensors for use in loss calculation
+        self.targets = torch.tensor(targets, dtype=torch.long)
+
+    def __len__(self):
+        """
+        Calculates the total size of the dataset.
+
+        Returns:
+            The total number of samples available in the dataset.
+        """
+        # Return the count of samples based on the length of the input tensor
+        return len(self.inputs)
+
+    def __getitem__(self, idx):
+        """
+        Retrieves a single input-target pair by its index.
+
+        Args:
+            idx: The integer index of the data point to retrieve.
+
+        Returns:
+            input_sample: The tensor representing the input window at the given index.
+            target_sample: The tensor representing the target label at the given index.
+        """
+        # Provide the input sequence and its associated target as a tuple
+        return self.inputs[idx], self.targets[idx]
+
+# %% 
+dataset = ShakespeareDataset(inputs, targets)
+loader = DataLoader(dataset, batch_size=128, shuffle=True, num_workers=0)
+vocab_size = len(vocab)  # Store vocab size for easy reference
+
+# %% 3.3 PyTorch Multihead Attention
+# =============================================================================
+# Up to this point, you've manually implemented every piece of self-attention, giving you a deep, hands-on understanding of how it works. Now, you'll take the next step towards building state-of-the-art models: using PyTorch's built-in nn.MultiheadAttention layer.
+# 
+# Why use the built-in layer instead of your manual version?
+# 
+# Efficiency: PyTorch's implementation is highly optimized and leveraged in real production models.
+# Complexity: The built-in module supports multi-head attention out of the box, allowing your model to learn multiple types of linguistic relationships in parallel—something that gets cumbersome to code by hand.
+# Scalability: You can easily adjust the number of heads, dropout, or embedding size, and take advantage of GPU acceleration and batched computation.
+# Compatibility: This layer is the exact one used in modern transformers, making it easy to transition your knowledge and code to larger or more sophisticated projects.
+# How Attention Works (Formula Explanation)
+# Self-attention for a sequence is computed as:
+# 
+#  
+# 
+# Where:
+# 
+#  are the query vectors,
+#  are the key vectors,
+#  are the value vectors,
+#  is the input matrix (sequence of embeddings),
+#  are the learned projection matrices,
+#  is the dimension of the key/query,
+# The output is a weighted sum of the value vectors, with weights determined by the similarity (dot product) between queries and keys.
+# For multi-head attention, you concatenate several such outputs (with parallel projections), and then linearly project again to the original embedding size.
+# 
+# Below, you'll see how easy it is to swap out your custom self-attention for PyTorch’s flexible, production-level multi-head attention layer.
+# 
+# =============================================================================
+class SelfAttnWithMHA(nn.Module):
+    """
+    A sequence modeling architecture using multi-head attention and positional embeddings.
+
+    Args:
+        vocab_size: The total number of unique tokens in the vocabulary.
+        seq_len: The fixed length of input sequences.
+        embed_dim: The dimensionality of the hidden states and embeddings.
+        num_heads: The number of parallel attention heads.
+        dropout: The dropout probability applied to the attention weights.
+    """
+    def __init__(self, vocab_size, seq_len, embed_dim=768, num_heads=12, dropout=0.1):
+        """
+        Initializes the model layers and internal configurations.
+
+        Args:
+            vocab_size: Size of the vocabulary.
+            seq_len: Maximum sequence length.
+            embed_dim: Dimensionality of the embedding space.
+            num_heads: Number of attention heads.
+            dropout: Regularization dropout rate.
+        """
+        super().__init__()
+        # Layer to map token indices to continuous vector representations
+        self.tok_embed = nn.Embedding(vocab_size, embed_dim)
+        # Layer to provide order information to the model via learnable vectors
+        self.pos_embed = nn.Embedding(seq_len, embed_dim)
+        # Multi-head attention mechanism for capturing complex sequence dependencies
+        self.attn = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+        # Projection layer to transform contextual representations into vocabulary logits
+        self.fc = nn.Linear(embed_dim, vocab_size)
+
+    def forward(self, token_ids):
+        """
+        Performs a forward pass on a batch of token sequences.
+
+        Args:
+            token_ids: A tensor of token indices with shape [batch_size, seq_len].
+
+        Returns:
+            logits: Prediction scores for the next token based on the final hidden state.
+            attn_w: The computed attention weights representing token relationships.
+        """
+        batch_size, seq_len = token_ids.shape
+        # Create a range of indices to represent the relative position of each token
+        positions = torch.arange(seq_len, device=token_ids.device).unsqueeze(0).expand(batch_size, seq_len)
+        # Combine token-specific and position-specific embeddings
+        input_vecs = self.tok_embed(token_ids) + self.pos_embed(positions)
+        # Calculate contextual representations and attention scores across all heads
+        attn_out, attn_w = self.attn(input_vecs, input_vecs, input_vecs, need_weights=True)
+        # Isolate the hidden state of the final token in the sequence
+        last_hidden = attn_out[:, -1, :]
+        # Generate the final output scores over the vocabulary
+        logits = self.fc(last_hidden)
+        # Provide the prediction results along with the attention weight matrix
+        return logits, attn_w
+
+# %%
+model = SelfAttnWithMHA(vocab_size=vocab_size, seq_len=SEQ_LEN)
+# Create a new instance of your (multi-head attention) model, sized to your vocab and sequence length
+
+loss_fn = nn.CrossEntropyLoss()  
+# Define the loss function (CrossEntropy is standard for language modeling);
+# Redefine here to ensure it's fresh and configured for your current task
+
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+# Define the optimizer (Adam adjusts model parameters during training);
+# Always recreate the optimizer after making a new model, or when model params change
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  
+# Select GPU ("cuda") if available, otherwise use CPU
+
+model.to(device)
+# Move your model’s parameters to the chosen device (CPU or GPU)
+
+torch.cuda.empty_cache()
+# (Optional) Clear unused memory from the GPU to avoid memory leaks or OOM errors;
+# Especially useful if you ran a different model before in the same session
+
+# %%
+# Example usage:
+sentence = "to be or not"
+output = generate_next_words(model, sentence, tokenizer, word2idx, idx2word, max_tokens=50, seq_len=SEQ_LEN, device=device)
+print("Generated sequence:", " ".join(output))
+
+# %% 3.4 Training Your Attention Model
+# =============================================================================
+# Now you’re ready to train your multi-head attention language model!
+# This function wraps the entire training process: it takes batches from your DataLoader, computes the model’s predictions, compares them to the true next words using the loss function, and updates the model’s parameters using the optimizer.
+# You’ll see a progress bar for each epoch, along with average loss—which should go down as your model learns from the data.
+# 
+# Run the cell below to begin training. You can increase the number of epochs to achieve better performance, but keep in mind that this will also increase the training time.
+# =============================================================================
+def train_model(model, loader, loss_fn, optimizer, epochs=10, device='cpu', vocab_size=None):
+    """
+    Executes the training loop for a sequence model over a specified number of epochs.
+
+    Args:
+        model: The neural network model to be trained.
+        loader: The DataLoader instance providing batches of training data.
+        loss_fn: The loss function used to evaluate model performance.
+        optimizer: The optimization algorithm used to update model weights.
+        epochs: The total number of iterations over the complete dataset.
+        device: The target hardware for computation (e.g., 'cpu' or 'cuda').
+        vocab_size: Optional parameter specifying the size of the vocabulary.
+
+    Returns:
+        None. This function modifies the model and optimizer states in-place.
+    """
+    # Transfer the model to the specified hardware device
+    model.to(device)
+    # Begin iterating through the specified number of training cycles
+    for epoch in range(epochs):
+        # Configure the model for training mode to enable specific behaviors like dropout
+        model.train()
+        # Initialize an accumulator for the cumulative loss within the epoch
+        total_loss = 0
+        # Determine the total number of batches in the data loader
+        n_batches = len(loader)
+        # Iterate through data batches using a progress bar for monitoring
+        with tqdm(loader, desc=f"Epoch {epoch+1}/{epochs}") as pbar:
+            for xb, yb in pbar:
+                # Move the input and target tensors to the active device
+                xb, yb = xb.to(device), yb.to(device)
+                # Reset gradients of the model parameters to zero
+                optimizer.zero_grad()
+                # Perform the forward pass to obtain logits and attention weights
+                logits, _ = model(xb)
+                # Calculate the loss based on model predictions and actual targets
+                loss = loss_fn(logits, yb)
+                # Execute the backward pass to calculate gradients
+                loss.backward()
+                # Update model parameters based on the computed gradients
+                optimizer.step()
+                # Accumulate the weighted loss for the current batch
+                total_loss += loss.item() * xb.size(0)
+                # Display the loss value for the current batch in the progress bar
+                pbar.set_postfix(loss=loss.item())
+
+        # Calculate the mean loss across all samples in the dataset
+        avg_loss = total_loss / len(loader.dataset)
+        # Log the performance summary for the completed epoch
+        print(f"Epoch {epoch+1:2d}: avg loss = {avg_loss:.4f}")
+        
+# %% # Usage:
+EPOCHS = 5
+vocab_size = len(vocab)  # Pass this in!
+train_model(model, loader, loss_fn, optimizer, epochs=EPOCHS, device=device, vocab_size=vocab_size)
+        
+# %%
+# =============================================================================
+# When you trained your model, you used a special token <nl> to represent newlines (line breaks) in the Shakespeare dataset.
+# This allowed your tokenizer and model to recognize and generate line boundaries just like any other word.
+# 
+# However, when you actually want to read or display the generated text, you want to see real line breaks—not the literal string <nl>.
+# That's why, in the generation function, you replace every occurrence of <nl> with the actual newline character \n.
+# This makes your generated samples readable and visually closer to real Shakespearean poetry or drama!
+# 
+# In other words:
+# 
+# Inside the model: <nl> acts as a "word" that teaches your network where lines start and end.
+# Outside the model: you convert <nl> back to a true line break so your output looks natural.
+# This small transformation turns a list like
+# ["to", "be", "<nl>", "or", "not", "<nl>", "to", "be"]
+# into something that prints as
+# 
+# to be
+# or not
+# to be
+# =============================================================================
+# A helper class to generate next words from a model with temperature sampling.
+
+class NextWordGenerator:
+    """
+    Generate next tokens from a language model using a fixed context window and temperature sampling.
+
+    Uses left-padding with a padding token to fill the initial context window.
+    Applies temperature scaling to logits, then samples with multinomial.
+    Converts special newline tokens to standard newline characters in the final output.
+    """
+
+    def __init__(
+        self,
+        model,
+        tokenizer,
+        word2idx,
+        idx2word,
+        *,
+        seq_len=6,
+        device="cpu",
+        pad_token="<pad>",
+        unk_token="<unk>",
+        nl_token="<nl>",
+    ):
+        """
+        Initialize the NextWordGenerator instance.
+
+        Arguments:
+        model: The neural network model used for sequence generation.
+        tokenizer: A callable function that converts a string into a sequence of string tokens.
+        word2idx: A dictionary mapping string tokens to their integer indices.
+        idx2word: A dictionary mapping integer indices back to string tokens.
+        seq_len: The maximum number of tokens to keep in the context window.
+        device: The hardware device where tensors will be allocated.
+        pad_token: The string representation of the padding token.
+        unk_token: The string representation of the unknown token.
+        nl_token: The string representation of the newline token.
+        """
+        # Assign the model to the instance variables
+        self.model = model
+        # Store the tokenizer function
+        self.tokenizer = tokenizer
+        # Store the mapping from words to indices
+        self.word2idx = word2idx
+        # Store the mapping from indices to words
+        self.idx2word = idx2word
+        # Define the context window length
+        self.seq_len = seq_len
+        # Define the processing device
+        self.device = device
+        # Define the token used for sequence padding
+        self.pad_token = pad_token
+        # Define the token used for unknown words
+        self.unk_token = unk_token
+        # Define the token representing a newline
+        self.nl_token = nl_token
+
+        # Cache the integer ID for the unknown token to prevent repeated dictionary lookups
+        self._unk_id = self.word2idx[self.unk_token]
+
+    def _make_window(self, generated):
+        """
+        Create a fixed-size context window from the generated tokens.
+
+        Arguments:
+        generated: A list of string tokens that have been generated so far.
+
+        Returns:
+        A list of string tokens representing the padded or truncated context window.
+        """
+        # Check if the generated sequence has reached or exceeded the maximum sequence length
+        if len(generated) >= self.seq_len:
+            # Slice and return only the most recent tokens up to the allowed sequence length
+            return generated[-self.seq_len:]
+        # Calculate the deficit of tokens needed to fill the required sequence window
+        pad_count = self.seq_len - len(generated)
+        # Prepend the necessary amount of padding tokens to the sequence
+        return [self.pad_token] * pad_count + generated
+
+    def _encode(self, tokens):
+        """
+        Convert a sequence of string tokens into a tensor of corresponding integer indices.
+
+        Arguments:
+        tokens: A sequence of string tokens to be encoded.
+
+        Returns:
+        A tensor containing the encoded token indices.
+        """
+        # Look up the index for each token, defaulting to the unknown token ID if not found
+        ids = [self.word2idx.get(t, self._unk_id) for t in tokens]
+        # Construct and return a tensor of the indices on the specified processing device
+        return torch.tensor([ids], dtype=torch.long, device=self.device)
+
+    def _decode_id(self, idx):
+        """
+        Convert a numerical token index back into its string representation.
+
+        Arguments:
+        idx: The integer index representing a specific token.
+
+        Returns:
+        The string representation of the token corresponding to the given index.
+        """
+        # Retrieve and return the string mapped to the specified index
+        return self.idx2word[idx]
+
+    def _postprocess(self, tokens):
+        """
+        Process the generated sequence of tokens to correctly format special characters.
+
+        Arguments:
+        tokens: A list of generated string tokens.
+
+        Returns:
+        A list of string tokens where special formatting tokens have been replaced.
+        """
+        # Replace custom newline tokens with actual newline characters for display or printing
+        return [("\n" if t == self.nl_token else t) for t in tokens]
+
+    def generate(self, sentence, *, max_tokens=20, temperature=1.0):
+        """
+        Generate a sequence of tokens continuing from the provided input sentence.
+
+        Arguments:
+        sentence: The initial string text to begin generation from.
+        max_tokens: The maximum limit of new tokens to generate.
+        temperature: A float value used to scale the logits before probability sampling.
+
+        Returns:
+        A list of string tokens containing the full generated sequence including the original tokens.
+        """
+        # Verify that the temperature parameter is strictly greater than zero
+        if temperature <= 0:
+            # Raise an exception if an invalid temperature value is provided
+            raise ValueError("temperature must be > 0")
+
+        # Switch the model to evaluation mode to ensure consistent generation behavior
+        self.model.eval()
+        # Tokenize the initial sentence into a list, preparing to mutate it in place without copying
+        generated = list(self.tokenizer(sentence))
+
+        # Temporarily disable gradient tracking to reduce memory usage during generation
+        with torch.no_grad():
+            # Loop over the allowed maximum number of tokens to generate
+            for _ in range(max_tokens):
+                # Retrieve the properly sized and padded context window for the current step
+                window = self._make_window(generated)
+                # Encode the context window tokens into a tensor of IDs
+                input_ids = self._encode(window)
+
+                # Feed the input tensor to the model to get raw logits, expecting a shape of [1, vocab]
+                logits, _ = self.model(input_ids)
+                # Scale the raw logits using the defined temperature variable
+                logits = logits / temperature
+                # Apply the softmax function to convert scaled logits into a probability distribution
+                probs = torch.softmax(logits, dim=-1)
+
+                # Sample the next token index based on the calculated probabilities, returning shape [1, 1]
+                next_id = torch.multinomial(probs, num_samples=1).item()
+                # Decode the chosen numeric index back into a string token
+                next_token = self._decode_id(next_id)
+                # Append the newly generated token to the sequence list
+                generated.append(next_token)
+
+        # Apply post-processing to the sequence and return the final list of tokens
+        return self._postprocess(generated)
+    
+# %% # Example usage:
+generator = NextWordGenerator(
+    model=model,
+    tokenizer=tokenizer,
+    word2idx=word2idx,
+    idx2word=idx2word,
+    seq_len=SEQ_LEN,
+    device=device,
+)
+
+output = generator.generate("To be or not to", max_tokens=50, temperature=1.0)
+print("Generated sequence:", " ".join(output))
+
+# %% 4 - Conclusion
+# =============================================================================
+# In this lab, you’ve worked through every step of building a modern attention-based language model from scratch:
+# 
+# You started by preparing your text data, creating a vocabulary, and organizing your dataset using sliding windows.
+# You implemented self-attention both manually and using PyTorch’s powerful nn.MultiheadAttention layer, learning exactly how these models “pay attention” to context.
+# You trained your model on real Shakespearean language, and were able to generate new text—sometimes even capturing the style and rhythm of the Bard himself!
+# By working hands-on with both custom and built-in attention, you gained a deep understanding of what makes transformers so effective in modern NLP:
+# 
+# The ability to learn flexible, context-dependent relationships within text;
+# The scalability and practicality of using optimized library components;
+# The importance of good data preparation and robust, interpretable generation.
+# Keep exploring! Try different seeds, experiment with model hyperparameters, or dive deeper into visualizing attention maps.
+# =============================================================================
+    
 
