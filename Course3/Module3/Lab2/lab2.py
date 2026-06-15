@@ -1140,4 +1140,82 @@ helper_utils.compare_models(history, pytorch_history)
 # The choice between them might depend on other factors (confidence requirements, training stability, etc.)
 # This demonstrates an important lesson: for many real-world tasks, simple and complex architectures can achieve similar results, and the best choice depends on your specific requirements beyond just accuracy.
 # =============================================================================
+# %% 8 - Testing Models with Real Text
+# 8.1 Creating a Prediction Function¶
+# Let's create a function to predict sentiment from any text:
+def predict_sentiment(text, model, tokenizer, device):
+    """
+    Performs sentiment inference on a single string input.
 
+    Args:
+        text (str): The raw input text string to be analyzed.
+        model (nn.Module): The trained neural network model used for prediction.
+        tokenizer (object): The tokenizer instance used to encode the text.
+        device (str or torch.device): The computation hardware (e.g., 'cpu' or 'cuda').
+
+    Returns:
+        sentiment (str): A string label indicating the predicted class ("Positive" or "Negative").
+        confidence (float): The probability score associated with the predicted class.
+        probabilities (Tensor): The full probability distribution across all classes.
+    """
+    # Set the model to evaluation mode to disable layers like dropout
+    model.eval()
+    
+    # Transform the raw text into a numerical sequence of indices
+    encoded = tokenizer.encode(text, max_len=256)
+    # Convert the list of indices into a batch-oriented LongTensor on the target device
+    input_tensor = torch.LongTensor([encoded]).to(device)
+    
+    # Disable gradient calculation for efficient inference
+    with torch.no_grad():
+        # Pass the input tensor through the model to obtain raw output scores
+        output = model(input_tensor)
+        # Apply the softmax function to normalize outputs into a probability distribution
+        probabilities = torch.softmax(output, dim=1)
+        # Identify the class index with the highest score
+        prediction = torch.argmax(output, dim=1)
+    
+    # Extract the probability value corresponding to the predicted class
+    confidence = probabilities[0][prediction].item()
+    # Map the predicted numerical index to a human-readable sentiment label
+    sentiment = "Positive" if prediction.item() == 1 else "Negative"
+    
+    # Return the label, the confidence score, and the complete probability tensor
+    return sentiment, confidence, probabilities[0]
+
+# %% # Test reviews
+test_reviews = [
+    "This movie was absolutely fantastic! I loved every minute of it.",
+    "Terrible film. Complete waste of time. I want my money back.",
+    "Not bad, but not great either. It was okay I guess.",
+    "One of the best films I've ever seen. Brilliant acting and amazing story!",
+    "Boring and predictable. I fell asleep halfway through."
+]
+
+print("="*60)
+print("TESTING BOTH MODELS WITH SAMPLE REVIEWS")
+print("="*60)
+
+for i, review in enumerate(test_reviews, 1):
+    print(f"\nReview {i}: \"{review[:50]}...\"" if len(review) > 50 else f"\nReview {i}: \"{review}\"")
+    print("-"*40)
+    
+    # Test with encoder from scratch
+    sentiment, confidence, probs = predict_sentiment(review, model, tokenizer, device)
+    print(f"Encoder from Scratch: {sentiment} (confidence: {confidence:.2%})")
+    print(f"  [Negative: {probs[0]:.3f}, Positive: {probs[1]:.3f}]")
+    
+    # Test with PyTorch implemented encoder
+    sentiment_pt, confidence_pt, probs_pt = predict_sentiment(review, pytorch_model, tokenizer, device)
+    print(f"PyTorch Implemented Encoder: {sentiment_pt} (confidence: {confidence_pt:.2%})")
+    print(f"  [Negative: {probs_pt[0]:.3f}, Positive: {probs_pt[1]:.3f}]")
+
+# %% 9 - Conclusion
+# =============================================================================
+# In this notebook, you successfully built a Transformer Encoder from scratch and applied it to sentiment analysis. You learned the fundamental components of the encoder architecture including multi-head attention, feed-forward networks, layer normalization, and residual connections.
+# 
+# By comparing the encoder built from scratch with PyTorch's built-in TransformerEncoder, you discovered that simpler architectures can often perform better on small datasets. The custom encoder from scratch achieved competitive accuracy despite having fewer parameters and layers than the PyTorch implemented encoder model.
+# 
+# The key takeaway is that understanding the architecture deeply by building it yourself gives you the intuition to make better design choices for your specific problem. You now have the foundation to experiment with more complex transformer architectures and apply them to various NLP tasks
+# 
+# =============================================================================
