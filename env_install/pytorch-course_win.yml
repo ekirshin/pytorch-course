@@ -1,0 +1,59 @@
+# conda env create -f pytorch-course_win.yml
+#
+# Target GPU: NVIDIA RTX PRO 1000 (Blackwell, compute capability sm_120)
+# Key point: Blackwell (sm_120) kernels only exist in PyTorch's CUDA 12.8+ (cu128)
+# wheels. The conda "pytorch" package and any cu121/cu124/cu126 build are compiled
+# up to sm_90 only and will fail on this GPU. So ALL torch-dependent packages are
+# installed via pip from the PyTorch cu128 index, not via conda.
+#
+# Prerequisite: install a recent NVIDIA driver (R570 or newer) before creating the env.
+ 
+name: pytorch-course
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Core Python (3.10 has cu128 wheels; 3.11/3.12 also fine)
+  - python=3.10
+  - pip
+  # Scientific / vis / utils that do NOT depend on torch -> safe to keep in conda
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn
+  - opencv
+  - matplotlib
+  - seaborn
+  - tqdm
+  - imageio
+  - scikit-image
+  # Jupyter support
+  - jupyterlab
+  - notebook
+  - ipykernel
+  # ---------------------------------------------------------------------------
+  # Everything below is installed via pip. Anything that depends on torch is kept
+  # OUT of the conda section so conda does not silently pull a CPU conda-pytorch.
+  # ---------------------------------------------------------------------------
+  - pip:
+      # PyTorch with Blackwell/sm_120 support (CUDA 12.8 build).
+      # --index-url makes pip resolve the +cu128 builds from PyTorch's index.
+      - --index-url https://download.pytorch.org/whl/cu128
+      - torch==2.7.1
+      - torchvision==0.22.1
+      - torchaudio==2.7.1
+      # Re-enable PyPI for the remaining packages.
+      - --extra-index-url https://pypi.org/simple
+      # torch-dependent packages (pip so they use the cu128 torch above)
+      - torchmetrics
+      - transformers
+      - torchinfo
+      - fastai
+      - lightning
+      - diffusers
+      # other ML / dev tooling
+      - optuna
+      - directory-tree
+      - ipywidgets
+      - setuptools
+      - spyder
