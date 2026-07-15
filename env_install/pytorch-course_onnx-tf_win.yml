@@ -1,0 +1,180 @@
+# =============================================================================
+# pytorch-course_onnx-tf_win.yml
+#
+# COURSE-WIDE environment (candidate to become the single env for the whole
+# course). It carries BOTH:
+#   (a) the full torch ecosystem used by the other labs (transformers, lightning,
+#       diffusers, fastai, torchmetrics, optuna, mlflow, ...), and
+#   (b) the frozen TensorFlow 2.14 + onnx-tf stack required by
+#       Course3/Module4/Lab2 ("From PyTorch to ONNX",  from onnx_tf.backend
+#       import prepare).
+#
+# The compatibility hinge that lets (a) and (b) share one env is TensorFlow 2.14
+# (NOT 2.13): TF 2.13 pins typing-extensions<4.6 which collides with torch's
+# typing-extensions>=4.10, while TF 2.14 removed that cap. Two constraints MUST
+# be pinned in the PIP section (not just conda), because pip runs after conda and
+# will otherwise upgrade them while resolving the unpinned torch ecosystem:
+#   * numpy < 2  -> TF 2.14 / ml_dtypes 0.2.0 are built against numpy 1.x; numpy
+#     2.x triggers "Unable to convert function return value ... () -> handle".
+#     Resolves to 1.26.4 (Coursera used 1.24.4; 1.26.4 also works with TF 2.14
+#     and is friendlier to the newer torch-ecosystem packages).
+#   * typing_extensions >= 4.14 -> jupyter_client (Spyder) needs >=4.13 and
+#     cattrs (mlflow) needs >=4.14; TF/torch impose no upper bound below 5.
+#
+# HOW THIS FILE WAS CREATED
+# -------------------------
+# 1. In the Coursera notebook we could not run `pip freeze` / `conda list`
+#    (shell access is blocked), so we dumped the installed packages purely in
+#    Python via `importlib.metadata.distributions()` plus a small runtime probe.
+# 2. The Coursera environment turned out to run ALL of the following together in
+#    a single env (proving they are mutually compatible):
+#        python 3.11, torch 2.7.1+cu126, torchvision 0.22.1+cu126,
+#        tensorflow 2.14.0, tensorflow-addons 0.22.0, tensorflow-probability 0.22.1,
+#        onnx 1.18.0, onnx-tf 1.10.0, onnxruntime 1.22.0,
+#        numpy 1.24.4, typing_extensions 4.10.0, protobuf 4.25.3, typeguard 2.13.3
+#    The compatibility hinge is TensorFlow 2.14 (NOT 2.13): TF 2.13 pins
+#    typing-extensions<4.6 which collides with torch's typing-extensions>=4.10,
+#    while TF 2.14 removed that cap.
+# 3. We replicated those exact pins here, changing ONLY the torch/torchvision
+#    build from the CUDA 12.6 (cu126) wheels Coursera uses to the CUDA 12.8
+#    (cu128) wheels, because the target GPU is an NVIDIA RTX PRO 1000 (Blackwell,
+#    compute capability sm_120). sm_120 kernels exist only in PyTorch's cu128+
+#    builds; cu126 would fail at runtime on this GPU.
+# 4. Added Spyder (requested) plus Jupyter support so the lab can run either in
+#    the Spyder IDE or as a notebook kernel.
+#
+# PREREQUISITES
+# -------------
+#   * A recent NVIDIA driver (R570 or newer) for Blackwell / cu128.
+#   * conda / miniconda.
+#
+# CREATE THE ENV
+# --------------
+#   conda env create -f env_install/pytorch-course_onnx-tf_win.yml
+#   conda activate pytorch-onnx-tf
+#
+# SANITY CHECK (after activation)
+# -------------------------------
+#   python -c "import torch, tensorflow as tf; from onnx_tf.backend import prepare; \
+#              print('torch', torch.__version__, 'cuda', torch.cuda.is_available()); \
+#              print('tf', tf.__version__)"
+# =============================================================================
+
+name: pytorch-onnx-tf
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # --- Interpreter -----------------------------------------------------------
+  # Coursera runs 3.11 (3.11.0rc1); we use the stable 3.11 line. cu128 wheels,
+  # tensorflow 2.14, onnx-tf and tensorflow-addons all ship cp311 builds.
+  - python=3.11
+  - pip
+
+  # --- Non-torch scientific / vis / IDE (conda-managed) ----------------------
+  # numpy is kept < 2 here for the conda-installed libs (matplotlib, spyder,
+  # jupyter). NOTE: this conda pin is NOT sufficient on its own -- pip runs after
+  # conda and would upgrade numpy to 2.x while resolving the unpinned torch
+  # ecosystem below, so numpy < 2 is ALSO pinned in the pip section. TF 2.14 /
+  # ml_dtypes require numpy < 2.
+  - numpy<2
+  # Force the OpenBLAS BLAS variant instead of MKL. Otherwise conda-forge pulls
+  # the newest MKL (e.g. 2026.1.0), whose ABI does not match numpy 1.26.4's
+  # expectations -> every BLAS call (including matplotlib's affine transforms)
+  # crashes with a Windows delay-load error (0xc06d007f) and kills the kernel.
+  # OpenBLAS (bundled in the PyPI numpy wheel, which is what a manually-fixed
+  # working env ended up using) sidesteps the MKL version mismatch entirely.
+  - libblas=*=*openblas
+  - scipy
+  - pandas
+  - scikit-learn
+  - opencv
+  # matplotlib pinned to the 3.8 line (Coursera used 3.8.3). Newer conda-forge
+  # matplotlib (3.11) is built in the numpy-2 era; pairing it with the numpy<2
+  # required by TF 2.14 risks native render crashes. 3.8.x is numpy-1-era safe.
+  - matplotlib=3.8.*
+  - seaborn
+  - tqdm
+  - imageio
+  - scikit-image
+  # Spyder IDE (requested). conda-forge provides reliable Qt binaries on Windows.
+  - spyder
+  # Jupyter support (so the lab can also be run as a notebook).
+  - jupyterlab
+  - notebook
+  - ipykernel
+
+  # ---------------------------------------------------------------------------
+  # Everything below is installed via pip. The torch/torchvision wheels come
+  # from the PyTorch cu128 index (Blackwell support); the rest come from PyPI.
+  # Anything torch- or tensorflow-related is kept OUT of the conda section so
+  # conda does not silently pull a mismatched CPU build.
+  # ---------------------------------------------------------------------------
+  - pip:
+      # -- PyTorch with Blackwell / sm_120 support (CUDA 12.8 build) -----------
+      # Same torch VERSION as Coursera (2.7.1) but the +cu128 build instead of
+      # +cu126, so it runs on the Blackwell GPU.
+      - --index-url https://download.pytorch.org/whl/cu128
+      - torch==2.7.1
+      - torchvision==0.22.1
+      - torchaudio==2.7.1
+
+      # -- Re-enable PyPI for the remaining packages --------------------------
+      - --extra-index-url https://pypi.org/simple
+
+      # -- Hard guards that pip MUST honour while resolving the ecosystem ------
+      # numpy < 2: TF 2.14 / ml_dtypes 0.2.0 are compiled for numpy 1.x. Without
+      # this pip-level pin, resolving the unpinned torch ecosystem upgrades numpy
+      # to 2.x and TensorFlow import crashes in pywrap_ml_dtypes.bfloat16().
+      - numpy<2
+
+      # -- Compatibility pins (must match Coursera for the TF/onnx-tf stack) ---
+      # typing-extensions floor is driven by the SUPERSET of packages in this
+      # course-wide env, NOT by Coursera's 4.10.0: jupyter_client (Spyder/Jupyter)
+      # needs >=4.13 and cattrs (mlflow) needs >=4.14. TensorFlow 2.14
+      # (tensorflow-intel) only requires >=3.6.6 with no upper cap and torch needs
+      # >=4.10, so raising this is safe. Capped <5 because confection/lightning/
+      # mlflow-skinny require <5. (Coursera's 4.10.0 crashed Spyder at startup:
+      # jupyter_client uses TypedDict(extra_items=...), a PEP 728 feature added in
+      # typing_extensions 4.13.)
+      - typing_extensions>=4.14,<5
+      - protobuf==4.25.3
+      # typeguard is required by tensorflow-addons and must stay <3.
+      - typeguard==2.13.3
+
+      # -- TensorFlow stack (the versions that make onnx-tf work) -------------
+      # TF 2.14 is the compatibility hinge (see header). tensorflow-addons and
+      # tensorflow-probability are hard dependencies pulled in by onnx-tf.
+      - tensorflow==2.14.0
+      - tensorflow-addons==0.22.0
+      - tensorflow-probability==0.22.1
+
+      # -- ONNX stack ---------------------------------------------------------
+      - onnx==1.18.0
+      - onnxruntime==1.22.0
+      # Legacy ONNX -> TensorFlow converter used by lab2 (import onnx_tf.backend).
+      - onnx-tf==1.10.0
+
+      # -- Rest of the course: torch-dependent packages -----------------------
+      # Installed via pip so they build against the cu128 torch above.
+      # NOTE: these are UNPINNED, while the TF/onnx-tf block above is tightly
+      # pinned. pip must find versions of transformers / lightning / diffusers /
+      # fastai that accept numpy<2 (1.26.4) and typing-extensions>=4.14. If pip
+      # reports a conflict here, the usual fix is to pin an OLDER release of the
+      # offending package (newer ones may require numpy>=2, which the frozen
+      # TF 2.14 stack forbids).
+      - torchmetrics
+      - transformers
+      - torchinfo
+      - fastai
+      - lightning
+      - diffusers
+
+      # -- Other ML / dev tooling ---------------------------------------------
+      - optuna
+      - directory-tree
+      - ipywidgets
+      - setuptools
+      - mlflow
