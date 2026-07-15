@@ -57,3 +57,5 @@ dependencies:
       - ipywidgets
       - setuptools
       - spyder
+      # experiment tracking
+      - mlflow
