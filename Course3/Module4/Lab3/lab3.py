@@ -492,6 +492,182 @@ model_pruned = helper_utils.replace_final_layer(resnet18_model_pruned, num_class
 #     For modules with a weight tensor, sums their elements to total_params and counts zero elements to total_zero_params.
 #     Calculates overall sparsity as the percentage of zero parameters out of the total.
 # =============================================================================
+def analyze_model_sparsity(model):
+    """
+    Calculates and prints the sparsity of a PyTorch model
+    by inspecting the computed 'weight' attribute of each module.
+    """
+    # Initialize total parameter count for weighted layers.
+    total_params = 0
+    # Initialize total count of zero parameters.
+    total_zero_params = 0
 
+    # Loop through all named modules (layers) in the model.
+    for name, module in model.named_modules():
+        # Check if the module has a 'weight' attribute and if it's a PyTorch tensor.
+        if hasattr(module, 'weight') and isinstance(module.weight, torch.Tensor):
+            # Add the number of elements in the current module's weight tensor to total_params.
+            total_params += module.weight.nelement()
+            # Count and add the number of zero elements in the current weight tensor to total_zero_params.
+            # Note: module.weight reflects the actual (masked) weights after pruning.
+            total_zero_params += torch.sum(module.weight == 0).item()
 
+    # Check if any weighted layers were found to avoid division by zero.
+    if total_params > 0:
+        # Calculate sparsity as a percentage.
+        sparsity = 100. * float(total_zero_params) / float(total_params)
+        # Print the calculated model sparsity.
+        print(f"Model Sparsity: {sparsity:.2f}%")
+        # Print the total number of parameters in weighted layers.
+        print(f"Total parameters (in weighted layers): {total_params}")
+        # Print the total count of zero parameters.
+        print(f"Total zero parameters (in weighted layers): {total_zero_params}")
+    else:
+        # Inform if no weighted layers were found.
+        print("No weighted layers found to analyze.")
+        
+# %%
+# =============================================================================
+# Performs an initial analysis of the model_pruned  to establish its baseline state before any pruning is applied.
+# Sparsity Analysis Output:
+# You will observe Model Sparsity: 0.00% and Total zero parameters: 0. This is expected, as no pruning has been performed yet, meaning all trainable weights in the model are non-zero.
+# Total parameters (in weighted layers) will show the full count of parameters in the model's convolutional and linear layers (e.g., 11,186,048 for ResNet18), reflecting the complete, unpruned network.
+# Selected Layer Weights Output:
+# The output from helper_utils.show_weights for the conv1 layer will display its raw numerical values. Crucially, you should not see any zeros scattered within this matrix, confirming the unpruned state of the weights.        
+# =============================================================================
+# --- Analysis Before Pruning ---
+print("--- Analysis Before Pruning ---")
+analyze_model_sparsity(model_pruned)
 
+# # --- Show initial weights of selected layers ---
+print("\n--- Selected conv1 Layer Weights Before Pruning ---\n")
+helper_utils.show_weights(model_pruned, ['conv1'])
+
+# %%
+# =============================================================================
+# This cell identifies the target layers for global pruning and then applies the pruning operation.
+# 
+# Identifying Layers: You first compile a list (parameters_to_prune) of all convolutional (torch.nn.Conv2d) and linear (torch.nn.Linear) layers within your model_pruned.
+# Excluding the Final Classifier: Crucially, the final classifier layer (fc) is explicitly excluded from this list. This is a common practice when pruning pre-trained models, as this layer was recently replaced for your dataset's classes. Aggressively pruning it might disproportionately impact accuracy, as its weights are often less redundant compared to the extensively pre-trained feature extraction layers.
+# Applying Global Pruning: The prune.global_unstructured function is then used to remove weights across all identified layers. You are applying a significant amount=0.5 (50%) of global unstructured pruning.
+# 
+# =============================================================================
+# Identify all convolutional and linear layers to be pruned, excluding the final classifier
+parameters_to_prune = []
+for module_name, module in model_pruned.named_modules():
+    if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear)) and 'fc' not in module_name:
+        parameters_to_prune.append((module, 'weight'))
+
+# Apply global unstructured pruning
+print("\n--- Applying 50% Global Unstructured Pruning ---\n")
+prune.global_unstructured(
+    parameters_to_prune,
+    pruning_method=prune.L1Unstructured,
+    amount=0.5,
+)
+print("Global pruning applied.")
+
+# %%
+# =============================================================================
+# Verify the immediate effects of applying global unstructured pruning to your model.
+# Sparsity Analysis Output:
+# You will now observe Model Sparsity to be approximately close to 50%, with a corresponding increase in Total zero parameters. This confirms that a significant portion of the model's weights have been successfully zeroed out.
+# The Total parameters (in weighted layers) remains unchanged, indicating that weights were zeroed, not entirely removed from the model's structure at this stage.
+# Note: This specific sparsity percentage is observed when amount=0.5 (50%) is used during the global unstructured pruning step. The exact value may vary slightly due to floating-point precision.
+# Selected Layer Weights Output:
+# The output from helper_utils.show_weights for the conv1 layer will now clearly display several 0. values scattered throughout the matrix. These zeros represent the individual weights that were removed by the global pruning operation. This is the temporary state of the weights before pruning is made permanent.
+# 
+# =============================================================================
+# --- Analysis After Pruning (Before Making it Permanent) ---
+print("--- Analysis After Pruning ---")
+analyze_model_sparsity(model_pruned)
+
+# # --- Show weights of selected layers after temporary pruning ---
+print("\n--- Selected Layer Weights After Temporary Pruning ---\n")
+helper_utils.show_weights(model_pruned, ['conv1'])
+
+# %%
+# =============================================================================
+# Execute a standard training loop to fine-tune the model_pruned on your dataset, similar to how the unpruned model was trained.
+# This training step occurs before making the pruning permanent.
+# When pruning is first applied, PyTorch introduces a weight_mask and retains the original weights (weight_orig).
+# During this fine-tuning process, the optimizer updates weight_orig, while the weight_mask ensures that the pruned (zeroed-out) connections remain zero. This allows the model to recover performance by adjusting the remaining non-zero weights.
+# If pruning were made permanent before training, the weight_orig and weight_mask would be removed, and subsequent training could inadvertently update the hard zeros back to non-zero values, effectively undoing the pruning and diminishing its benefits.
+# =============================================================================
+# Train the pruned model
+trained_pruned_model, pruned_metrics = helper_utils.training_loop(model_pruned,
+                                                                  train_loader,
+                                                                  val_loader,
+                                                                  num_epochs,
+                                                                  DEVICE,
+                                                                  num_classes
+                                                                 )
+# %%
+# =============================================================================
+# Finalize the pruning by calling prune.remove() on each pruned layer, baking the zeros permanently into the weights.
+# A final sparsity analysis confirms that the zeroed weights are maintained.
+# =============================================================================
+# --- Making Pruning Permanent ---
+print("--- Making Pruning Permanent ---")
+for module, param_name in parameters_to_prune:
+    prune.remove(module, param_name)
+print("Pruning has been made permanent.")
+
+# --- Final Analysis ---
+print("\n--- Final Analysis of Trained Model (Post-Permanent Pruning) ---")
+analyze_model_sparsity(trained_pruned_model)
+
+# # --- Show weights of selected layers after permanent pruning ---
+print("\n--- Selected Layer Weights After Permanent Pruning ---\n")
+helper_utils.show_weights(trained_pruned_model, ['conv1']) # Confirming persistence of zeros
+
+# %% Save the state dictionary and metrics of the trained pruned model to file.
+helper_utils.save_pruned_model_and_metrics(trained_pruned_model, pruned_metrics)
+
+# %%
+# =============================================================================
+# This is it! The moment of truth has arrived. Run the next cell to finally unveil the actual effects and results of your pruning efforts, providing a comprehensive comparison of your unpruned and pruned models.
+# 
+# The report will display key metrics for both models, allowing you to directly assess the impact of pruning.
+# For each model, you will see:
+# Total Parameters: The overall count of parameters in the model.
+# Non-Zero Parameters: Specifically for the pruned model, this will highlight the "Effective Parameters: weights retained for computation" after pruning.
+# Saved model size: The disk size of the saved model files.
+# Final Accuracy: The validation accuracy achieved after training.
+# Final Precision (Macro): The macro-averaged precision.
+# Final Recall (Macro): The macro-averaged recall.
+# Final F1-Score (Macro): The macro-averaged F1-Score.
+# =============================================================================
+helper_utils.comparison_report(
+    unpruned_state_dict_path="unpruned_model_state_dict.pth",
+    unpruned_metrics_path="unpruned_metrics.pkl",
+    pruned_state_dict_path="pruned_model_permanent_state_dict.pth",
+    pruned_metrics_path="pruned_metrics.pkl",
+    num_epochs=num_epochs,
+    device=DEVICE
+)
+
+# %%
+# =============================================================================
+# The results are in! As you've now seen from the comparison report, the tangible effects of pruning on your model are truly impressive!
+# 
+# Parameters: You've seen that while the Total Parameters for both the unpruned and pruned models appear similar, the Non-Zero Parameters for your pruned model show a groundbreaking reduction – effectively halving the network's active weights! This highlights the substantial sparsity you've achieved.
+# Performance Metrics: And here's the truly exciting part: despite pruning a remarkable 50% of the network, your Final Accuracy, Final Precision (Macro), Final Recall (Macro), and Final F1-Score (Macro) for the pruned model remained largely comparable to the unpruned baseline! This isn't just a minor win; it's a powerful demonstration that you can achieve massive model compression without sacrificing predictive power.
+# However, another observation you might have made is that despite pruning a significant 50% of the network, the Saved model size for both the unpruned and pruned models appears to be the same. You might be wondering: what exactly was the purpose of pruning then, if the model file size doesn't change?
+# 
+# The short answer is that standard PyTorch saving (torch.save) stores all parameters, including those that have been zeroed out by pruning, in a dense format. Pruning, as demonstrated here, primarily reduces the effective number of parameters used for computation, by setting unimportant weights to zero. While this can lead to faster inference on hardware that supports sparse operations, it doesn't inherently reduce the model's disk footprint or dense memory usage without further steps.
+# 
+# So, how can you truly reduce the model's file size and memory footprint for deployment in resource-constrained environments? This is where techniques like quantization come into play, reducing the precision of the model's weights and activations. You'll learn more about quantization next!
+# =============================================================================
+
+# %% Conclusion
+# =============================================================================
+# This notebook provided a practical guide to model pruning with PyTorch. You have seen how to apply different pruning strategies, from removing individual weights with nstructured pruning to entire neurons with structured pruning. You also explored how to apply these techniques across multiple layers simultaneously using global pruning.
+# 
+# In the optional section, you put these concepts into practice by applying global pruning to a pre-trained ResNet18 model. The results demonstrated that you can achieve a massive reduction in a model's effective parameters while maintaining performance comparable to an unpruned baseline. This outcome highlights a vital aspect of model optimization: a model's performance does not always depend on the sheer number of its parameters.
+# 
+# You may have noticed that even after zeroing out half the network, the model's file size did not decrease. This is because standard PyTorch methods save the pruned weights in a dense format, masks and all. While this approach is perfect for understanding pruning's impact, achieving actual size reduction requires additional steps or other compression techniques.
+# 
+# The skills learned here are a foundational step in optimizing deep learning models for deployment. By reducing a model's complexity, you make it more suitable for resource-constrained environments, paving the way for the next step in model compression: quantization.
+# 
+# =============================================================================
