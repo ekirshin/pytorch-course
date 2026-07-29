@@ -119,13 +119,13 @@ trainloader, testloader = helper_utils.load_cifar10()
 #     Validation Accuracy: 88.20%
 # =============================================================================
 # Initialize the model
-model = CNN()
+#model = CNN()
 
 # Set number of training epochs
-num_epochs = 30
+#num_epochs = 30
 
 # Run the training loop
-helper_utils.training_loop(model, trainloader, testloader, num_epochs, DEVICE)
+#helper_utils.training_loop(model, trainloader, testloader, num_epochs, DEVICE)
 
 # %% Load the Pre-trained Model
 # =============================================================================
@@ -362,5 +362,352 @@ quantized_static_model.qconfig = torch.quantization.get_default_qconfig('x86')
 torch.quantization.prepare(quantized_static_model, inplace=True)
 
 # %%
+# =============================================================================
+# After preparing the model, you can inspect its layers. At this stage, no weights have been converted yet. The preparation step has inserted observer modules that will watch the data flow during calibration, but the core layers still use 32-bit floating-point weights.
+# 
+#     Print the dtype for each Conv2d and Linear layer to confirm they are still in torch.float32 format before calibration and conversion.
+# =============================================================================
+print("--- Weight dtypes before static conversion ---")
+# Iterate through the model's layers
+for name, module in quantized_static_model.named_modules():
+    # Check if the layer is a Conv2d or Linear layer
+    if isinstance(module, (nn.Conv2d, nn.Linear)):
+        print(f"Layer: {name:<10} | Weight dtype: {module.weight.dtype}")
+
+# %%
+# =============================================================================
+# Calibration is a step unique to static quantization where you must feed the model representative, unlabelled data. This allows the observers to watch the range and distribution of the activation tensors at different points in the model.
+# 
+#     Define a calibrate function to perform this process.
+#     The function takes in the prepared quantized_static_model and the testloader. It will iterate through a number of batches, and for each batch, it will run a forward pass.
+#         During these passes, the observers collect statistics that will be used to determine the optimal quantization parameters for the activations.
+# 
+# =============================================================================
+def calibrate(model, data_loader, num_batches=50):
+    """
+    Feeds sample data through the model to calibrate quantization observers.
+
+    Args:
+        model (torch.nn.Module): The model to be calibrated.
+        data_loader (torch.utils.data.DataLoader): The data loader providing calibration samples.
+        num_batches (int): The maximum number of batches to use for calibration.
+
+    Returns:
+        None: This function performs in-place calibration of the model observers.
+    """
+    
+    # Set the model to evaluation mode
+    model.eval()
+    
+    # Calculate the total number of batches available in the data loader
+    total_batches_available = len(data_loader)
+    
+    # Determine the final number of batches to process based on availability and requested limit
+    calibration_batches = min(num_batches, total_batches_available)
+
+    # Disable gradient calculation to reduce memory usage and increase speed
+    with torch.no_grad():
+        # Initialize a progress bar for the calibration process
+        progress_bar = tqdm(data_loader, total=calibration_batches, desc="Calibrating")
+        
+        # Iterate through the data loader to process images
+        for i, (image, _) in enumerate(progress_bar):
+            # Terminate the loop once the target number of batches is reached
+            if i >= calibration_batches:
+                break
+            
+            # Execute a forward pass to update the quantization observers
+            model(image)
+
+    # Output the final status of the calibration process
+    print(f"\nCalibration finished after processing {calibration_batches} out of {total_batches_available} batches.")
+    
+# %%
+# Calibrate with sample data
+calibrate(quantized_static_model, testloader)    
+
+# %% Convert and Save Model
+# =============================================================================
+# Now that the model has been calibrated, convert it into a fully quantized model.
+#     This takes the calibrated model and uses the statistics gathered by the observers to permanently convert the model's weights and activations to the INT8 format.
+#     The inplace=True argument modifies the model directly, which saves memory by not creating a new copy.
+# 
+# =============================================================================
+# Convert the prepared and calibrated model to a fully quantized model
+torch.quantization.convert(quantized_static_model, inplace=True)
+
+# %%
+# =============================================================================
+# Now that the model has been converted, you can inspect the data types again.
+# 
+# After static quantization, the Conv2d and Linear layers are replaced with their fused and quantized counterparts. This means:
+# 
+#     Your previous torch.nn.Conv2d layers are now instances of torch.nn.quantized.Conv2d.
+#     Your previous torch.nn.Linear layers are now instances of torch.nn.quantized.Linear.
+# 
+# Run the following cell to confirms that, unlike dynamic quantization, both the convolutional and linear layers have been successfully converted to use torch.qint8 weights.
+# =============================================================================
+print("--- Weight dtypes after static conversion ---")
+# Iterate through the quantized model's layers
+for name, module in quantized_static_model.named_modules():
+    # Check if the layer is a statically quantized Conv2d or Linear layer
+    if isinstance(module, (torch.nn.quantized.Conv2d, torch.nn.quantized.Linear)):
+        print(f"Layer: {name:<10} | Weight dtype: {module.weight().dtype}")
+        
+# %% Save the state dictionary of the final, highly optimized model.
+# Save the state dictionary of the final, statically quantized model to a file
+torch.save(quantized_static_model.state_dict(), 'cifar10_cnn_quantized_static.pth')        
+
+# %% Compare Performance
+# Now that you've applied static quantization, measure the size and inference speed of the new model compared with the baseline model.
+# Calculate the model's size in megabytes (MB)
+quant_static_model_size = helper_utils.get_model_size(quantized_static_model)
+# Measure the average inference time in milliseconds (ms)
+quant_static_model_inf_time = helper_utils.measure_average_inference_time_ms(quantized_static_model)
+
+# Generate the Markdown comparison table
+helper_utils.comparison_table(
+    baseline_model_size=baseline_model_size,
+    baseline_model_time=baseline_model_inf_time,
+    quantized_model_size=quant_static_model_size,
+    quantized_model_time=quant_static_model_inf_time,
+    quantization_type="Static"
+)
+
+
+# %% Quantization-Aware Training (QAT)
+# =============================================================================
+# Finally, you will explore Quantization-Aware Training (QAT). This is the most involved quantization method, but it can yield the best performance and accuracy compared to post-training methods.
+# 
+# Unlike the previous techniques, QAT simulates the effects of quantization during a training or fine-tuning phase. This allows the model to adapt its weights to the precision loss introduced by quantization, which can significantly improve the final accuracy of the quantized model.
+# 
+# The workflow involves several key stages which you will now step through.
+# QAT-Ready CNN
+# 
+# To perform QAT and the necessary optimization of "layer fusion," you must first modify the baseline CNN architecture.
+# 
+#     Separate ReLU Modules: Activation functions like ReLU are defined as separate layers (e.g., self.relu1) instead of being called functionally within the forward pass. This is a requirement for layer fusion.
+#     Layer Fusion Method: A fuse_model method is added to perform layer fusion. It uses the torch.quantization.fuse_modules function to combine common sequences like (Conv, BN, ReLU) into single, optimized layers.
+#     Quantization Stubs: Just like with static quantization, QuantStub and DeQuantStub are added to mark the entry and exit points for quantization.
+#     QAT-Compatible Operations: Some operations are not supported in the QAT workflow. For example, .view() has been replaced with .reshape(), which is supported.
+# 
+# =============================================================================
+class QATCNN(nn.Module):
+    """
+    A Convolutional Neural Network architecture designed for Quantization-Aware Training.
+
+    Args:
+
+    Returns:
+        None: Initializes the model instance and its constituent layers.
+    """
+    def __init__(self):
+        # Initialize the parent nn.Module class
+        super(QATCNN, self).__init__()
+        
+        # Add a QuantStub module to convert the input from float to quantized format
+        self.quant = torch.quantization.QuantStub()
+        
+        # Add a DeQuantStub module to convert the output from quantized to float format
+        self.dequant = torch.quantization.DeQuantStub()
+
+        # Define the first convolutional block with 3 input channels and 64 output channels
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)
+        # Apply batch normalization to the output of the first convolution
+        self.bn1 = nn.BatchNorm2d(64)
+        # Apply ReLU activation as a standalone module for quantization compatibility
+        self.relu1 = nn.ReLU(inplace=True)
+
+        # Define the second convolutional block with 128 output channels
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        # Apply batch normalization to the output of the second convolution
+        self.bn2 = nn.BatchNorm2d(128)
+        # Define the second ReLU activation module
+        self.relu2 = nn.ReLU(inplace=True)
+
+        # Define the third convolutional block with 256 output channels
+        self.conv3 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
+        # Apply batch normalization to the output of the third convolution
+        self.bn3 = nn.BatchNorm2d(256)
+        # Define the third ReLU activation module
+        self.relu3 = nn.ReLU(inplace=True)
+
+        # Define the fourth convolutional block with 512 output channels
+        self.conv4 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
+        # Apply batch normalization to the output of the fourth convolution
+        self.bn4 = nn.BatchNorm2d(512)
+        # Define the fourth ReLU activation module
+        self.relu4 = nn.ReLU(inplace=True)
+
+        # Define a max pooling layer to reduce spatial dimensions
+        self.pool = nn.MaxPool2d(2, 2)
+        # Define a dropout layer for regularization
+        self.dropout = nn.Dropout(0.2)
+        
+        # Define the first fully connected layer
+        self.fc1 = nn.Linear(512 * 2 * 2, 1024)
+        # Define the activation module for the first fully connected layer
+        self.relu_fc1 = nn.ReLU(inplace=True)
+
+        # Define the second fully connected layer
+        self.fc2 = nn.Linear(1024, 512)
+        # Define the activation module for the second fully connected layer
+        self.relu_fc2 = nn.ReLU(inplace=True)
+
+        # Define the final output layer for 10 classes
+        self.fc3 = nn.Linear(512, 10)
+
+    def forward(self, x):
+        """
+        Defines the computation performed at every call of the model.
+
+        Args:
+            x (torch.Tensor): The input image tensor.
+
+        Returns:
+            x (torch.Tensor): The output logits after dequantization.
+        """
+        # Convert the input tensor from floating point to quantized format
+        x = self.quant(x)
+
+        # Apply the first convolutional block followed by pooling
+        x = self.relu1(self.bn1(self.conv1(x)))
+        # Downsample the spatial dimensions
+        x = self.pool(x)
+        # Apply the second convolutional block
+        x = self.relu2(self.bn2(self.conv2(x)))
+        # Downsample the spatial dimensions
+        x = self.pool(x)
+        # Apply the third convolutional block
+        x = self.relu3(self.bn3(self.conv3(x)))
+        # Downsample the spatial dimensions
+        x = self.pool(x)
+        # Apply the fourth convolutional block
+        x = self.relu4(self.bn4(self.conv4(x)))
+        # Downsample the spatial dimensions
+        x = self.pool(x)
+
+        # Flatten the multidimensional tensor into a vector for the fully connected layers
+        x = x.reshape(-1, 512 * 2 * 2)
+        
+        # Apply the first fully connected block
+        x = self.relu_fc1(self.fc1(x))
+        # Apply dropout to the hidden activations
+        x = self.dropout(x)
+        # Apply the second fully connected block
+        x = self.relu_fc2(self.fc2(x))
+        # Apply dropout to the hidden activations
+        x = self.dropout(x)
+        # Apply the final linear transformation to produce class logits
+        self.fc3(x)
+
+        # Convert the output tensor back from quantized format to floating point
+        x = self.dequant(x)
+        
+        # Return the resulting tensor
+        return x
+
+    def fuse_model(self):
+        """
+        Fuses sequential layers into a single module to optimize for quantization.
+
+        Args:
+
+        Returns:
+            None: This method modifies the model in-place.
+        """
+        # Fuse the components of the first convolutional block
+        torch.quantization.fuse_modules(self, ['conv1', 'bn1', 'relu1'], inplace=True)
+        # Fuse the components of the second convolutional block
+        torch.quantization.fuse_modules(self, ['conv2', 'bn2', 'relu2'], inplace=True)
+        # Fuse the components of the third convolutional block
+        torch.quantization.fuse_modules(self, ['conv3', 'bn3', 'relu3'], inplace=True)
+        # Fuse the components of the fourth convolutional block
+        torch.quantization.fuse_modules(self, ['conv4', 'bn4', 'relu4'], inplace=True)
+        
+        # Fuse the first fully connected layer with its activation
+        torch.quantization.fuse_modules(self, ['fc1', 'relu_fc1'], inplace=True)
+        # Fuse the second fully connected layer with its activation
+        torch.quantization.fuse_modules(self, ['fc2', 'relu_fc2'], inplace=True)
+
+# %% Prepare Model for QAT
+# =============================================================================
+# Since the QATCNN architecture is different from the original CNN, you cannot simply load the weights. You must first create a mapping to transfer the learned weights from the baseline model to the new QAT-ready architecture.
+# Instantiate Model and Load Weights
+# 
+#     First, create an instance of the new QATCNN model.
+#     Next, load the state_dict (which contains the learned weights) from the pre-trained baseline_model into memory.
+# =============================================================================
+# Create an instance of the QAT-ready model architecture
+qat_model = QATCNN()
+
+# Load the state dictionary from the pre-trained baseline model using the defined path
+baseline_model_state_dict = torch.load(baseline_model_path)
+
+# Get the state dictionary of the new, un-trained QAT model.
+qat_model_state_dict = qat_model.state_dict()
+
+# %% Map and Transfer Weights
+# =============================================================================
+# Now, define a mapping dictionary to explicitly link the layer names from the old model architecture to the new one.
+# Finally, iterate through this mapping to transfer the weights and load the updated state_dict into your qat_model.
+# =============================================================================
+# Define the mapping to transfer weights
+mapping = {
+    # conv1
+    "conv1.weight": "conv1.weight",
+    "conv1.bias": "conv1.bias",
+    "bn1.weight": "bn1.weight",
+    "bn1.bias": "bn1.bias",
+    "bn1.running_mean": "bn1.running_mean",
+    "bn1.running_var": "bn1.running_var",
+    # conv2
+    "conv2.weight": "conv2.weight",
+    "conv2.bias": "conv2.bias",
+    "bn2.weight": "bn2.weight",
+    "bn2.bias": "bn2.bias",
+    "bn2.running_mean": "bn2.running_mean",
+    "bn2.running_var": "bn2.running_var",
+    # conv3
+    "conv3.weight": "conv3.weight",
+    "conv3.bias": "conv3.bias",
+    "bn3.weight": "bn3.weight",
+    "bn3.bias": "bn3.bias",
+    "bn3.running_mean": "bn3.running_mean",
+    "bn3.running_var": "bn3.running_var",
+    # conv4
+    "conv4.weight": "conv4.weight",
+    "conv4.bias": "conv4.bias",
+    "bn4.weight": "bn4.weight",
+    "bn4.bias": "bn4.bias",
+    "bn4.running_mean": "bn4.running_mean",
+    "bn4.running_var": "bn4.running_var",
+    # fc layers
+    "fc1.weight": "fc1.weight",
+    "fc1.bias": "fc1.bias",
+    "fc2.weight": "fc2.weight",
+    "fc2.bias": "fc2.bias",
+    "fc3.weight": "fc3.weight",
+    "fc3.bias": "fc3.bias",
+}
+
+# Transfer weights using the mapping
+for old_key, new_key in mapping.items():
+    if old_key in baseline_model_state_dict and new_key in qat_model_state_dict:
+        qat_model_state_dict[new_key] = baseline_model_state_dict[old_key]
+
+# Load the newly mapped weights into the QAT model
+qat_model.load_state_dict(qat_model_state_dict)
+
+# %% Fuse Layers and Set Configuration
+# =============================================================================
+# With the weights transferred, you can now begin preparing the model for the QAT fine-tuning process.
+# 
+#     First, you must set the model to evaluation mode (.eval()) as a prerequisite for layer fusion.
+#     Call the fuse_model() method to combine the sequential layers into single, optimized units.
+#     Set the QAT-specific quantization configuration. While other configurations like x86 / 'fbgemm' are available for server-side CPUs, for a QAT workflow where the fine-tuning loop is run on a GPU (which is what you will do), the 'qnnpack' backend is required for operator compatibility.
+#         The 'qnnpack' backend itself is optimized for mobile (ARM) CPUs, which is a common deployment target for quantized models.
+# 
+# =============================================================================
 
 
