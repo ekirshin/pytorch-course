@@ -134,8 +134,8 @@ trainloader, testloader = helper_utils.load_cifar10()
 #     NOTE: If you trained your own model in the optional cell above, please make sure to set the path to baseline_model_path = 'cifar10_cnn_best.pt', which is the name used by the training script for the saved model.
 # 
 # =============================================================================
-#baseline_model_path = './baseline_pretrained_model/cifar10_cnn_30_epochs_best.pt'
-baseline_model_path = 'cifar10_cnn_best.pt'
+baseline_model_path = './baseline_pretrained_model/cifar10_cnn_30_epochs_best.pt'
+# baseline_model_path = 'cifar10_cnn_best.pt'
 
 # %% Create an instance of the CNN model.
 # Load the pre-trained weights from the baseline_model_path into the model structure.
@@ -709,5 +709,314 @@ qat_model.load_state_dict(qat_model_state_dict)
 #         The 'qnnpack' backend itself is optimized for mobile (ARM) CPUs, which is a common deployment target for quantized models.
 # 
 # =============================================================================
+# Set the model to evaluation mode. This is a required step before layer fusion.
+qat_model.eval()
 
+# Call the custom `fuse_model` method to combine sequential Conv-BN-ReLU and Linear-ReLU layers.
+qat_model.fuse_model()
+
+# Set the Quantization-Aware Training specific quantization configuration.
+qat_model.qconfig = torch.quantization.get_default_qat_qconfig('qnnpack')
+
+# %% Prepare Model for QAT Training
+# =============================================================================
+#     Crucially, you must switch the model back to training mode (.train()) before the final preparation step.
+#     Use the torch.quantization.prepare_qat function to insert "fake quantization" modules. These modules simulate quantization errors during the fine-tuning process, allowing the model to learn to be robust to them.
+# =============================================================================
+# Set the model back to training mode. This is a requirement for the `prepare_qat` function.
+qat_model.train()
+
+# Use `torch.quantization.prepare_qat` to prepare the model for Quantization-Aware Training.
+qat_model = torch.quantization.prepare_qat(qat_model)
+
+# %% QAT Fine-Tuning
+# =============================================================================
+# This is the core "training" part of Quantization-Aware Training, where you will fine-tune the prepared model for a small number of epochs to help it adapt to quantization noise.
+# 
+#     The training loop itself is a standard PyTorch training loop and contains no special operations for QAT. You will notice it does not include a validation step; that is because this loop operates on the floating-point model that only simulates quantization effects.
+#     The "awareness" comes from the model itself, which simulates these quantization effects during the forward and backward passes.
+#     This process allows the model's weights to adjust to the precision loss, which helps recover the final model's accuracy.
+#     The true performance evaluation is reserved for the final, converted integer model, which you will create in the next section.
+# =============================================================================
+# Run the QAT fine-tuning loop
+qat_model = helper_utils.train_qat(qat_model, trainloader, DEVICE, epochs=5)
+
+# %% 
+# =============================================================================
+# After fine-tuning, the qat_model is now "aware" of quantization effects, but it is not yet a true integer model. The combination of layer fusion and the prepare_qat function has transformed the model's original architecture, swapping standard layers for specialized QAT-ready modules. These new modules now have fake quantization observers attached, which simulated the noise and rounding of INT8 operations during training.
+# 
+# Specifically, the model now contains these key layer types with learnable weights:
+# 
+#     torch.ao.nn.intrinsic.qat.modules.conv_fused.ConvReLU2d
+#     torch.ao.nn.intrinsic.qat.modules.linear_relu.LinearReLU
+#     torch.ao.nn.qat.modules.linear.Linear
+# 
+# Despite these structural changes, the underlying weights of these new modules are still in torch.float32 format to allow for gradient updates during the fine-tuning process. The following code verifies this state right before the final conversion to a true integer model.
+# =============================================================================
+print("--- Weight dtypes before final QAT conversion ---")
+# Iterate through the model's layers
+for name, module in qat_model.named_modules():
+    # Check for all QAT-prepared layers using their full module paths
+    if isinstance(module, (torch.ao.nn.intrinsic.qat.modules.conv_fused.ConvReLU2d, 
+                           torch.ao.nn.intrinsic.qat.modules.linear_relu.LinearReLU, 
+                           torch.ao.nn.qat.modules.linear.Linear)):
+        print(f"Layer: {name:<10} | Weight dtype: {module.weight.dtype}")
+
+# %% Final Conversion and Evaluation
+# =============================================================================
+# The fine-tuning process has prepared the floating-point model for the inaccuracies of quantization. Now, before you can evaluate its final performance, you must convert this "aware" model into a true integer-only model.
+# Convert and Save the Final Model
+# 
+#     The model must first be moved to the CPU, if it already wasn't, as the conversion to a fully quantized model is a CPU-only operation.
+#     Use torch.quantization.convert to finalize the process. This replaces the fake quantization modules with real integer-based operations and quantizes the weights to INT8.
+# =============================================================================
+# Move the model to CPU for conversion
+qat_model.to("cpu")
+
+# Convert the QAT-trained model to a final, fully quantized integer model
+final_quantized_qat_model = torch.quantization.convert(qat_model.eval(), inplace=False)
+
+# %% 
+# =============================================================================
+# With the final conversion complete, the "aware" floating-point model is now a true, high-performance integer model. The fake quantization modules have been removed and replaced with actual INT8 operations.
+# 
+# You can inspect the final data types to confirm that all the targeted Conv2d and Linear layers have been successfully converted to use torch.qint8 weights.
+# =============================================================================
+print("--- Weight dtypes after final QAT conversion ---")
+# Iterate through the final quantized model's layers
+for name, module in final_quantized_qat_model.named_modules():
+    # Check if the layer is a statically quantized Conv2d or Linear layer
+    if isinstance(module, (torch.nn.quantized.Conv2d, torch.nn.quantized.Linear)):
+        print(f"Layer: {name:<10} | Weight dtype: {module.weight().dtype}")
+        
+# %% Finally, save the state dictionary of the converted, integer-only model.
+# Save the final quantized model
+torch.save(final_quantized_qat_model.state_dict(), 'cifar10_cnn_qat_quantized.pt')
+
+# %% Evaluate the Quantized Model's Accuracy
+# Now that the model has been converted into its final INT8 format, you can perform the definitive evaluation to measure its accuracy on the test set.
+# Run the evaluation
+helper_utils.evaluate_qat(final_quantized_qat_model, testloader)
+
+# %% Compare Performance
+# Now that you've performed QAT, measure the size and inference speed of the new model compared with the baseline model.
+# Calculate the model's size in megabytes (MB)
+qat_model_size = helper_utils.get_model_size(final_quantized_qat_model)
+# Measure the average inference time in milliseconds (ms)
+qat_model_inf_time = helper_utils.measure_average_inference_time_ms(final_quantized_qat_model)
+
+# Generate the Markdown comparison table
+helper_utils.comparison_table(
+    baseline_model_size=baseline_model_size,
+    baseline_model_time=baseline_model_inf_time,
+    quantized_model_size=qat_model_size,
+    quantized_model_time=qat_model_inf_time,
+    quantization_type="QAT"
+)
+
+# %% Overall Model Quantization Results
+# Finally, the following code gathers all the calculated performance metrics into a dictionary and calls a helper function to display a summary table, allowing you to compare the results of all quantization methods side-by-side.
+# Gather all the calculated statistics into a dictionary
+all_model_stats = {
+    "Baseline": (baseline_model_size, baseline_model_inf_time),
+    "Dynamic Quantized": (quantized_dynamic_model_size, quantized_dynamic_model_inf_time),
+    "Static Quantized": (quant_static_model_size, quant_static_model_inf_time),
+    "QAT Quantized": (qat_model_size, qat_model_inf_time)
+}
+
+# Display the final comparison table
+helper_utils.display_full_comparison(all_model_stats)
+        
+# %%
+# =============================================================================
+# Now that you have explored dynamic, static, and quantization-aware training in detail, you might be wondering when to apply each method in your own work. Understanding the strengths, trade-offs, and suitable contexts for each technique is crucial to maximizing the benefits of your model optimization efforts. Let's delve into some best practices and use cases for each strategy to help you decide which approach aligns best with your specific needs and goals.
+# 
+# Dynamic Quantization
+# 
+#     Best Practices: This is the simplest method to apply and serves as an excellent starting point for quantization. It doesn't require any changes to the model architecture or a calibration dataset.
+#     Use Cases: Dynamic quantization is most effective when the model's weights take up a significant amount of memory and the bottleneck is memory bandwidth. It is particularly useful for models where providing a representative dataset for calibration is difficult, such as models with highly variable activations like LSTMs and Transformers. Use it when you need a quick and easy way to reduce model size with a moderate speed-up.
+# 
+# Static Quantization
+# 
+#     Best Practices: To get the best results, you must provide a representative dataset for the calibration step. This allows the model to accurately determine the quantization parameters for the activations. Fusing layers (e.g., Conv-BN-ReLU) before calibration is also highly recommended for better performance.
+#     Use Cases: This is the recommended method for maximizing inference speed on CPUs, especially for models with stable activation patterns like CNNs. It is ideal for server-side applications where you can calibrate on a sample of the validation data and deploy on x86 CPUs (using the 'x86' backend).
+# 
+# Quantization-Aware Training (QAT)
+# 
+#     Best Practices: QAT requires the most setup, including modifying the model architecture for layer fusion and running a short fine-tuning loop (typically for 1-5 epochs with a small learning rate). Always start with a well-trained floating-point model before beginning the QAT process.
+#     Use Cases: QAT should be your go-to method when you need the highest possible accuracy for your quantized model. Use it when post-training static or dynamic quantization results in an unacceptable drop in performance. It is essential for mission-critical applications where you need the size and speed benefits of quantization without significantly compromising on accuracy.
+# 
+# By understanding these techniques and their implications, you can now tailor your quantization strategy to best fit your application's needs, whether you are prioritizing ease of implementation, maximum inference speed, or the highest possible accuracy.
+# =============================================================================
+
+# %% (Optional) A Real-World Application: Quantization of a Hugging Face VQA
+
+# =============================================================================
+# In this section, you will move beyond the custom CNN and apply your knowledge to a practical, real-world scenario. You'll take a large, pre-trained model from the Hugging Face Hub and optimize it using quantization.
+# 
+# You will see the end-to-end process of loading a powerful Visual Question Answering (VQA) model, establishing its baseline performance, applying dynamic quantization, and then comparing the final model's size and inference speed against the original. Crucially, you'll also compare the actual answers generated by both models to see how optimization impacts output quality. This addresses the key question: even if the model is smaller and faster, are its results still just as good?
+# 
+# Why a VQA model and why Dynamic Quantization?
+# 
+# This example uses a VQA model because it represents a modern, complex architecture — a Transformer—which is widely used but often large and computationally intensive, making it a perfect candidate for optimization.
+# 
+# For this example, you will use Dynamic Quantization. Based on the best practices discussed earlier, this method is the ideal choice for several reasons:
+# 
+#     It is the simplest technique to apply, serving as an excellent starting point for quantization as it requires no changes to the model architecture or a calibration dataset.
+#     It is particularly effective for models with highly variable activations, such as LSTMs and Transformers.
+#     It is especially useful in cases where providing a representative dataset for calibration is difficult, which can be the case for complex multi-modal inputs like in VQA.
+#     It provides a quick and easy way to significantly reduce model size with a moderate speed-up, which is often the primary goal when deploying large, pre-trained models.
+# 
+# Load and Prepare the VQA Model
+# 
+#     Use the helper function, get_blip_vqa_model_and_processor to load the necessary components for performing VQA with the Salesforce/blip-vqa-base model. The function returns two objects:
+#         blip_vqa_model: The pre-trained Salesforce/blip-vqa-base model.
+#         blip_vqa_processor: The helper that handles the model's (blip_vqa_model) required preprocessing, converting raw images and text into the exact tensor format it needs.
+#             In the Hugging Face ecosystem, it is standard for models to be paired with these specific processors. You can think of the processor as a mandatory first step that ensures the data is perfectly formatted for the PyTorch model to use.
+# =============================================================================
+blip_vqa_model, blip_vqa_processor = helper_utils.get_blip_vqa_model_and_processor()
+
+# %% 
+# =============================================================================
+# Move the blip_vqa_model and all its parameters to the specified DEVICE (cpu).
+# 
+#     This is ideal because PyTorch's quantization techniques are highly optimized for CPU inference, making the performance benefits most apparent.
+# 
+# Set the model to evaluation mode.
+# Finally, calculate the model's size to establish the first part of your performance baseline.
+# =============================================================================
+# Define the compute device as "cpu"
+DEVICE = "cpu"
+
+# Move the model and all of its parameters to the specified device (the CPU)
+blip_vqa_model.to(DEVICE)
+
+# Set the model to evaluation model
+blip_vqa_model.eval()
+
+# Now that the model is fully prepared, calculate its size for your baseline
+blip_baseline_model_size = helper_utils.get_model_size(blip_vqa_model)
+
+# %% Upload and Verify Your Own Image
+
+# =============================================================================
+# Alright, now for the fun part! You've loaded the model and prepared it for inference; it's time to see it in action.
+# 
+# You're about to perform Visual Question Answering (VQA). VQA is exactly what it sounds like: you can provide the model with an image and then ask it questions in plain English, just like you would with a person.
+# 
+# The code below will display an upload widget. Feel free to upload any image you like from your computer — a photo of your pet, a vacation picture, anything! After your image is displayed, you'll be able to ask the model questions about it, such as "What is the dog doing?" or "How many people are in this photo?".
+# 
+# Running the function helper_utils.upload_jpg_widget() will display a widget that allows you to upload your own images into the workspace.
+# 
+#     You can only upload images that have a .jpg extension.
+#     Each image should not exceed 5 MB in file size.
+#     Once an image is successfully uploaded, you'll see its file path dsiplayed, which you can directly copy and paste into the cell below.
+# 
+# Also, once the widget is displayed, you can use it multiple times to upload images; you don't have to re-run the helper_utils.upload_jpg_widget() function.
+# =============================================================================
+#helper_utils.upload_jpg_widget()
+
+# %% Set the path to your image (as displayed above).
+# For convenience, a default image path is already provided.
+image_path = './images/eiffel_tower.jpg' ### <-- Replace with your image path here
+
+# %%
+# Display the image
+DisplayImage(image_path, width=400, height=400)
+
+# %% Run Inference on the Full-Precision Model
+# =============================================================================
+# 
+#     Define the question you want to ask about the image.
+#         You can change the text in the string to ask your own custom question.
+# =============================================================================
+question = "Describe the scene in the image." ### <-- Replace with your question here
+
+# %%
+# =============================================================================
+# Now, you will run the VQA task using the full-precision baseline model.
+# Call the perform_vqa helper function, which handles the entire inference process and returns both the generated answer and the inference time it took.
+# =============================================================================
+baseline_answer, blip_model_inf_time = helper_utils.perform_vqa(blip_vqa_model, blip_vqa_processor, image_path, question)
+
+# %% # --- Print Results ---
+print(f"Baseline Model Size: {blip_baseline_model_size:.2f} MB")
+print(f"Baseline Inference Time: {blip_model_inf_time:.4f} s")
+print("-" * 50)
+print(f"Question: {question}")
+print(f"Baseline Model Answer: {baseline_answer}")
+
+# %% Run Inference on Dynamically Quantized Model
+# =============================================================================
+#     First, apply dynamic quantization on the BLIP VQA model.
+#         blip_vqa_model: The variable holding the baseline model that you want to quantize.
+#             Note that this operation only targets the model. The "processor" is simply a data-preparation helper; it doesn't contain the large, weighted neural network layers suitable for this optimization, so there's no need to consider it for quantization.
+#         {torch.nn.Linear}: Only the Linear layers will be quantized. For Transformer-based models like BLIP, these layers contain the vast majority of the model's parameters and computational work, making them the most effective target for optimization.
+#         dtype=torch.qint8: This sets the target data type for the quantized weights to 8-bit signed integers.
+#     After quantization, calculate the new model's size.
+# =============================================================================
+try:
+    # Apply dynamic quantization to the Linear layers of the BLIP model
+    quantized_blip_vqa_model = torch.quantization.quantize_dynamic(
+        blip_vqa_model, 
+        {torch.nn.Linear}, 
+        dtype=torch.qint8
+    )
+    
+    print("Dynamic quantization applied successfully to the BLIP model.")
+
+except Exception as e:
+    print(f"Failed to apply dynamic quantization. Error: {e}")
+
+
+# Get the quantized model's size.
+quantized_blip_model_size = helper_utils.get_model_size(quantized_blip_vqa_model)
+
+# %% Now, you will run the VQA task using the quantized model.
+quantized_answer, quantized_inf_time = helper_utils.perform_vqa(quantized_blip_vqa_model, blip_vqa_processor, image_path, question)
+
+# %%
+# --- Print Results ---
+print(f"Quantized Model Size: {quantized_blip_model_size:.2f} MB")
+print(f"Quantized Inference Time: {quantized_inf_time:.4f} s")
+print("-" * 50)
+print(f"Question: {question}")
+print(f"Quantized Model Answer: {quantized_answer}")
+
+# %% Compare Performance
+helper_utils.blip_comparison_table(
+    question=question,
+    baseline_answer=baseline_answer,
+    quantized_answer=quantized_answer,
+    baseline_size=blip_baseline_model_size,
+    quantized_size=quantized_blip_model_size,
+    baseline_time_s=blip_model_inf_time,
+    quantized_time_s=quantized_inf_time
+)
+ 
+# %% Fantastic results! This is the moment where theory comes to life, showing the real-world power of quantization. Take a moment to look at what you've just accomplished, it's impressive!
+
+# =============================================================================
+# First, look at the Model Size. You should see a massive reduction, likely around 65%, shrinking the model to a fraction of its original size! This is a huge victory. In the real world, this means faster download times, lower storage costs, and the ability to deploy powerful models on memory-constrained devices like mobile phones.
+# 
+# Now, take a look at the Answers from both models. What did they generate for your image? Are they the same? Do you agree with their description? It's incredible to see how even after compressing the model so significantly, the quantized version can produce an answer that is identical or makes just as much sense as the original. This is the goal of optimization: to gain efficiency while keeping the model intelligent and effective.
+# 
+# Finally, look at your Inference Time. Depending on your specific hardware and the current run, you might see a speed-up, a slow-down, or very little change. While theoretically, 8-bit integer math should be faster, the actual result depends on several factors:
+# 
+#     Quantization Overhead: Dynamic quantization has a small, fixed cost because it converts data types on-the-fly. For a single inference run, this overhead can sometimes outweigh the speed-up from the faster calculations.
+#     Hardware and Environment: Performance gains are highly dependent on the specific CPU architecture. The full benefits are often most visible in highly optimized, production-level environments.
+#     Batch Size: Optimization benefits are typically more pronounced when processing large batches of data at once. Since you are only inferring on a single image, the full potential may not be realized.
+# =============================================================================
+
+# %% Conclusion
+
+
+# =============================================================================
+# In this notebook, you have performed a comprehensive, end-to-end exploration of model quantization. Starting with a floating-point baseline model, you have successfully applied three powerful PyTorch techniques and observed their impact on model size, inference speed, and accuracy.
+# 
+# You began with Dynamic Quantization, seeing how easily you can achieve a significant reduction in model size, a method that works particularly well for models like RNNs and transformers. You then moved to Static Quantization, a more nuanced post-training technique that requires a calibration step to also quantize activations, leading to even greater speed and memory savings, especially for CNNs. Finally, you dove deep into Quantization-Aware Training (QAT). By modifying the model architecture for layer fusion and fine-tuning it to be "aware" of quantization noise, you produced a highly compressed model that preserved nearly all of its original accuracy. To ground these concepts, you also applied dynamic quantization to a large, pre-trained VQA model, observing firsthand the significant size reduction and its impact on output quality.
+# 
+# The skills you have developed here are essential for moving models from research to production. You are now equipped to analyze the trade-offs between implementation effort, model size, inference speed, and accuracy, allowing you to select the most appropriate quantization strategy for deploying efficient, high-performance models in a variety of real-world scenarios.
+# 
+# =============================================================================
 
